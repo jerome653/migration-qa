@@ -11,6 +11,14 @@ that a migrated site is **complete**, **visually accurate**, and **production sa
 4. **Reports** — history, HTML + JSON reports, evidence assets.
 
 ## Quick start
+
+**One line (Windows PowerShell — no git needed):**
+```
+irm https://raw.githubusercontent.com/docssgen-admin/migration-qa/main/bootstrap.ps1 | iex
+```
+Fetches the tool, installs dependencies + the browser, runs the self-test, and creates a `qa` launcher.
+
+**Or manually** (after `git clone` / ZIP download):
 ```
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 qa qa-serve        # open http://127.0.0.1:7878
