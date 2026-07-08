@@ -1,0 +1,8 @@
+node_modules/
+_ui-runs/
+_archive/
+.auditor-data/
+shots/
+screenshots/
+*.log
+qa.cmd
