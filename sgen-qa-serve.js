@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// sgen qa-serve — local web UI for the SGEN Migration QA Suite. FOUR independent tools, one browser app,
+// sgen qa-serve — local web UI for the SGEN Site QA suite. FOUR independent tools, one browser app,
 // bound to 127.0.0.1 only. No AI at runtime; no fake results. Every button POSTs to the SAME frozen
 // engines the CLIs use — this file is UI-exposure ONLY and modifies none of them:
 //   1. Site Audit          -> runAudit + renderReport                (/api/run)
@@ -37,7 +37,7 @@ const gitCommit = (() => { try { return require('child_process').execSync('git r
 
 // ---- shared page chrome (nav + shared runner) ---------------------------------------------------
 function appPage() {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SGEN Migration QA Suite</title><style>${STYLE}
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SGEN Site QA</title><style>${STYLE}
   :root{--nav-h:56px}
   .top{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px 12px;padding:8px 20px;min-height:var(--nav-h);flex-wrap:wrap}
   @media(max-width:640px){ .top{gap:8px} .top .env{display:none} .top nav{margin-left:0;width:100%;order:3} .top .brand{flex:1 1 auto} }
@@ -145,7 +145,7 @@ function appPage() {
   .ritem{cursor:pointer}.ritem.sel{border-color:var(--brand);background:var(--surface)}
   </style></head><body>
   <div class="top">
-    <div class="brand"><span class="mk"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>SGEN Migration QA</div>
+    <div class="brand"><span class="mk"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>SGEN Site QA</div>
     <nav>
       <button data-t="audit" class="on" onclick="tab('audit')"><b>1 · Site Audit</b><span class="nd">quality-check one site</span></button>
       <button data-t="visual" onclick="tab('visual')"><b>2 · Visual Comparison</b><span class="nd">old vs new, side by side</span></button>
@@ -252,7 +252,7 @@ function appPage() {
   <!-- first-use walkthrough (operational, shown once; reopen via ? Help) -->
   <div class="ovl" id="walk"><div class="wk">
     <div class="wk-body">
-      <div class="wk-step on" data-w="0"><div class="lbl">Welcome</div><h3>SGEN Migration QA</h3><p>SGEN Migration QA verifies that a migrated website is <b>complete</b>, <b>visually accurate</b>, and <b>production safe</b>. Four independent tools, one local workspace — no data leaves this machine.</p></div>
+      <div class="wk-step on" data-w="0"><div class="lbl">Welcome</div><h3>SGEN Site QA</h3><p>SGEN Site QA checks any website's quality — audit a live site, compare an old build against a new one, verify a migration made it across, and gate launch-readiness. Four independent tools, one local workspace — no data leaves this machine.</p></div>
       <div class="wk-step" data-w="1"><div class="lbl">Tool 1</div><h3>Site Audit</h3><p>Checks a single site for technical quality, accessibility, security, performance, and production issues.</p><div class="io"><div><div class="k">Inputs</div><ul><li>URL</li><li>Scan options</li></ul></div><div><div class="k">Output</div><ul><li>Findings</li><li>Evidence</li><li>Report</li></ul></div></div></div>
       <div class="wk-step" data-w="2"><div class="lbl">Tool 2</div><h3>Visual Comparison</h3><p>Compares a reference site and target site visually across SGEN breakpoints.</p><div class="io"><div><div class="k">Inputs</div><ul><li>Reference URL</li><li>Target URL</li><li>Pages · Viewports · Axes</li></ul></div><div><div class="k">Output</div><ul><li>Similarity score</li><li>Screenshots</li><li>Differences</li></ul></div></div></div>
       <div class="wk-step" data-w="3"><div class="lbl">Tool 3</div><h3>Post-Deployment Check</h3><p>Did everything make it across? Every page, section, image, menu and form on the old site is verified to exist intact on the new build.</p><div class="pipe-mini">Inventory → Completeness → Visual Comparison → Production Validation → Certification</div></div>
@@ -287,7 +287,7 @@ function appPage() {
       chime();flashTitle('\\u2713 '+tool+' done');
       if(!('Notification' in window))return;
       if((document.hidden||!document.hasFocus())&&Notification.permission==='granted'){
-        try{var nt=new Notification('SGEN Migration QA \\u2014 '+tool+' finished',{body:body,tag:'sgenqa-'+pre,requireInteraction:false});nt.onclick=function(){try{window.focus();}catch(e){}nt.close();};}catch(e){}
+        try{var nt=new Notification('SGEN Site QA \\u2014 '+tool+' finished',{body:body,tag:'sgenqa-'+pre,requireInteraction:false});nt.onclick=function(){try{window.focus();}catch(e){}nt.close();};}catch(e){}
       }
     }
     function stream(endpoint,body,pre,onDone){
@@ -538,6 +538,6 @@ async function apiCertify(req, res) {
 server.requestTimeout = 0; server.headersTimeout = 0;
 fs.mkdirSync(RUNS, { recursive: true }); fs.mkdirSync(DATA, { recursive: true });
 server.listen(PORT, '127.0.0.1', () => {
-  process.stderr.write(`\nSGEN Migration QA Suite → http://127.0.0.1:${PORT}\n(4 tools: Site Audit · Visual Comparison · Post-Deployment Check · Reports. Ctrl+C to stop.)\n`);
+  process.stderr.write(`\nSGEN Site QA → http://127.0.0.1:${PORT}\n(4 tools: Site Audit · Visual Comparison · Post-Deployment Check · Reports. Ctrl+C to stop.)\n`);
   if (arg('open', false)) { try { spawn(process.platform === 'win32' ? 'cmd' : 'sh', process.platform === 'win32' ? ['/c', 'start', '', `http://127.0.0.1:${PORT}`] : ['-c', `xdg-open http://127.0.0.1:${PORT}`], { detached: true, stdio: 'ignore' }).unref(); } catch (e) {} }
 });
