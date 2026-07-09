@@ -83,7 +83,7 @@ function appPage() {
   .pipe{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);font-size:11.5px}
   .pipe span{padding:4px 9px;border:1px solid var(--line);border-radius:99px;color:var(--ink-faint)}
   .pipe span.on{border-color:var(--brand);color:var(--brand);background:var(--surface-2)}
-  .pipe span.done{border-color:var(--ok,#3EA372);color:var(--ok,#3EA372)}
+  .pipe span.done{border-color:var(--ok,#E7C87A);color:var(--ok,#E7C87A)}
   .rlist{display:flex;flex-direction:column;gap:8px}
   .ritem{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:13px}
   .ritem .tag{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.04em}
