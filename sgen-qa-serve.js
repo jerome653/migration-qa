@@ -79,7 +79,7 @@ function appPage() {
   .pbar{height:8px;background:var(--surface-2);border:1px solid var(--line);border-radius:99px;overflow:hidden;display:none;margin-top:12px}.pbar.on{display:block}
   .pfill{height:100%;width:0;background:var(--brand);transition:width .35s ease;border-radius:99px}
   .cmplink{font-size:13px;margin-top:10px}.cmplink a{color:var(--brand);font-weight:600}
-  iframe{width:100%;height:auto;min-height:520px;border:1px solid var(--line);border-radius:12px;background:var(--ground);display:block;overflow:auto;margin-top:14px}
+  iframe{width:100%;height:auto;min-height:72vh;border:1px solid var(--line);border-radius:12px;background:var(--ground);display:block;overflow:hidden;margin-top:14px}
   .pipe{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);font-size:11.5px}
   .pipe span{padding:4px 9px;border:1px solid var(--line);border-radius:99px;color:var(--ink-faint)}
   .pipe span.on{border-color:var(--brand);color:var(--brand);background:var(--surface-2)}
@@ -114,20 +114,16 @@ function appPage() {
   .help:hover .tip,.help:focus .tip{display:block}
   .help .tip b{color:var(--ink);display:block;margin-bottom:3px;font-size:12px}
   .help .tip em{color:var(--brand-ink);font-style:normal;display:block;margin-top:5px}
-  /* walkthrough modal */
-  .ovl{position:fixed;inset:0;background:rgba(0,0,0,.74);z-index:100;display:none;align-items:center;justify-content:center;padding:20px}
-  .ovl.on{display:flex}
-  .wk{background:var(--surface);border:1px solid var(--line-strong);border-radius:16px;max-width:560px;width:100%;box-shadow:var(--shadow);overflow:hidden}
-  .wk-body{padding:28px 30px;min-height:180px}
-  .wk-step{display:none}.wk-step.on{display:block}
-  .wk .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--brand-ink);font-weight:700;margin-bottom:6px}
-  .wk h3{font-size:19px;margin:0 0 9px;letter-spacing:-.01em}
-  .wk p{color:var(--ink-soft);font-size:13.5px;line-height:1.62;margin:0 0 11px}
-  .wk .io{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;margin-top:10px}
-  .wk .io div{flex:1;min-width:160px}.wk .io .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-faint);font-weight:700;margin-bottom:4px}
-  .wk .io ul{margin:0;padding-left:16px;color:var(--ink-soft);line-height:1.6}
-  .wk .pipe-mini{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-top:10px}
-  .wk-foot{display:flex;align-items:center;gap:10px;padding:15px 30px;border-top:1px solid var(--line);background:var(--surface-2)}
+  /* guided tour (spotlight coach-marks) */
+  .tour{position:fixed;inset:0;z-index:100;display:none;pointer-events:none}
+  .tour.on{display:block}
+  #tour-hi{position:fixed;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.74),0 0 0 2px var(--brand-solid),0 0 22px 3px rgba(224,31,38,.35);transition:top .28s ease,left .28s ease,width .28s ease,height .28s ease,opacity .2s;pointer-events:none;opacity:0}
+  #tour-hi.show{opacity:1}
+  .tour-pop{position:fixed;width:340px;max-width:90vw;background:var(--surface);border:1px solid var(--line-strong);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px 0;pointer-events:auto;transition:top .28s ease,left .28s ease}
+  .tour-pop .tour-lbl{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--brand-ink);font-weight:700;margin-bottom:6px}
+  .tour-pop h3{font-size:17px;margin:0 0 8px;letter-spacing:-.01em}
+  .tour-pop p{color:var(--ink-soft);font-size:13px;line-height:1.6;margin:0 0 14px}
+  .tour-foot{display:flex;align-items:center;gap:9px;padding:13px 0;border-top:1px solid var(--line);margin:0 -20px 0;padding-left:20px;padding-right:20px}
   .wk-dots{display:flex;gap:6px;margin-right:auto}
   .wk-dots i{width:7px;height:7px;border-radius:50%;background:var(--line-strong);transition:background .2s}.wk-dots i.on{background:var(--brand-solid)}
   .wk-btn{background:var(--surface);border:1px solid var(--line-strong);color:var(--ink);border-radius:8px;padding:8px 17px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
@@ -179,18 +175,22 @@ function appPage() {
 
     <!-- 2 VISUAL COMPARISON -->
     <section class="panel" id="p-visual">
-      <h2 class="tt">Visual Comparison</h2><p class="sub">Compare a reference site and a target site visually across the SGEN breakpoints — no prior audit, no certification, no stored inventory. Diffs page render + full DOM structure.</p>
+      <h2 class="tt">Visual Comparison</h2><p class="sub">Compare a reference site and a target site visually across industry device breakpoints — no prior audit, no certification, no stored inventory. Diffs page render + full DOM structure.</p>
       <div class="toolgrid">
         <div class="col-left"><div class="card">
           <label class="fld" style="min-width:0">Reference URL<input id="v-ref" type="text" placeholder="old / source site" spellcheck="false"></label>
           <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="v-tgt" type="text" placeholder="new / SGEN site" spellcheck="false"></label>
           <div class="grp"><div class="glab">Scope <span class="help" tabindex="0">?<span class="tip"><b>Scope</b>How many pages to compare. <b style="display:inline">Full site</b> discovers additional linked pages — useful for audits, but may surface non-canonical URLs (pagination, query variants).<em>Example: Single page for a fast homepage check.</em></span></span></div>
-            <select id="v-scope" style="max-width:280px"><option value="single">Single page (homepage)</option><option value="multiple">Multiple pages (up to max)</option><option value="sitemap">Sitemap-driven</option><option value="full">Full site</option></select>
-            <label style="font-size:12px;color:var(--ink-soft);margin-left:10px">max <input id="v-max" type="number" value="8" min="1" max="200"></label></div>
-          <div class="grp"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>Industry-standard device widths: desktop, laptop, iPad landscape/portrait, iPhone, Android baseline. The 360–430 phone band is where most real-world breakage lives.<em>1920 · 1440 · 1024 · 768 · 390 · 360</em></span></span></div><div class="chips" id="v-vps">
-            <label class="chip"><input type="checkbox" value="1920" checked>1920</label><label class="chip"><input type="checkbox" value="1440" checked>1440</label><label class="chip"><input type="checkbox" value="1024" checked>1024</label><label class="chip"><input type="checkbox" value="768" checked>768</label><label class="chip"><input type="checkbox" value="390" checked>390</label><label class="chip"><input type="checkbox" value="360" checked>360</label></div></div>
-          <div class="grp"><div class="glab">Comparison axes <span class="help" tabindex="0">?<span class="tip"><b>Comparison axes</b>Defines what is compared.<em>Layout · Components · Assets · Forms · Behaviors</em></span></span></div><div class="chips" id="v-ax">
-            <label class="chip"><input type="checkbox" value="page" checked>Page</label><label class="chip"><input type="checkbox" value="section" checked>Section</label><label class="chip"><input type="checkbox" value="global" checked>Global components</label><label class="chip"><input type="checkbox" value="assets" checked>Assets</label><label class="chip"><input type="checkbox" value="forms" checked>Forms</label><label class="chip"><input type="checkbox" value="behaviors" checked>Behaviors</label></div></div>
+            <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
+              <select id="v-scope" style="flex:1;min-width:0;max-width:340px"><option value="single">Single page (homepage)</option><option value="multiple">Multiple pages (up to max)</option><option value="sitemap">Sitemap-driven</option><option value="full">Full site</option></select>
+              <label style="font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:6px;flex:none">max pages <input id="v-max" type="number" value="8" min="1" max="200"></label></div></div>
+          <div class="grp"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>Industry-standard device widths. The 360–430 phone band is where most real-world breakage lives.<em>desktop · laptop · iPad landscape/portrait · iPhone · Android</em></span></span></div><div class="chips" id="v-vps">
+            <label class="chip"><input type="checkbox" value="1920" checked>1920 · Desktop</label><label class="chip"><input type="checkbox" value="1440" checked>1440 · Laptop</label><label class="chip"><input type="checkbox" value="1024" checked>1024 · iPad&nbsp;LS</label><label class="chip"><input type="checkbox" value="768" checked>768 · iPad</label><label class="chip"><input type="checkbox" value="390" checked>390 · iPhone</label><label class="chip"><input type="checkbox" value="360" checked>360 · Android</label></div></div>
+          <div class="grp"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>Every comparison runs the full check — there is nothing to toggle.<em>Pixel match + structural diff at each viewport.</em></span></span></div>
+            <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:10px 13px">
+              Each paired page is compared at every selected viewport on two axes:
+              <b style="display:inline;color:var(--ink)">pixel match</b> (visual difference %) and
+              <b style="display:inline;color:var(--ink)">structural diff</b> — elements <b style="display:inline;color:var(--ink)">missing</b>, <b style="display:inline;color:var(--ink)">extra</b>, <b style="display:inline;color:var(--ink)">moved</b>, or <b style="display:inline;color:var(--ink)">restyled</b> vs the reference. The full check always runs.</div></div>
           <div class="row" style="margin-top:16px"><button class="run" id="v-btn" onclick="runVisual()">Run visual comparison</button></div>
         </div></div>
         <div class="col-right">
@@ -249,22 +249,21 @@ function appPage() {
 
   </div>
 
-  <!-- first-use walkthrough (operational, shown once; reopen via ? Help) -->
-  <div class="ovl" id="walk"><div class="wk">
-    <div class="wk-body">
-      <div class="wk-step on" data-w="0"><div class="lbl">Welcome</div><h3>SGEN Site QA</h3><p>SGEN Site QA checks any website's quality — audit a live site, compare an old build against a new one, verify a migration made it across, and gate launch-readiness. Four independent tools, one local workspace — no data leaves this machine.</p></div>
-      <div class="wk-step" data-w="1"><div class="lbl">Tool 1</div><h3>Site Audit</h3><p>Checks a single site for technical quality, accessibility, security, performance, and production issues.</p><div class="io"><div><div class="k">Inputs</div><ul><li>URL</li><li>Scan options</li></ul></div><div><div class="k">Output</div><ul><li>Findings</li><li>Evidence</li><li>Report</li></ul></div></div></div>
-      <div class="wk-step" data-w="2"><div class="lbl">Tool 2</div><h3>Visual Comparison</h3><p>Compares a reference site and target site visually across SGEN breakpoints.</p><div class="io"><div><div class="k">Inputs</div><ul><li>Reference URL</li><li>Target URL</li><li>Pages · Viewports · Axes</li></ul></div><div><div class="k">Output</div><ul><li>Similarity score</li><li>Screenshots</li><li>Differences</li></ul></div></div></div>
-      <div class="wk-step" data-w="3"><div class="lbl">Tool 3</div><h3>Post-Deployment Check</h3><p>Did everything make it across? Every page, section, image, menu and form on the old site is verified to exist intact on the new build.</p><div class="pipe-mini">Inventory → Completeness → Visual Comparison → Production Validation → Certification</div></div>
-      <div class="wk-step" data-w="4"><div class="lbl">Tool 4</div><h3>Reports</h3><p>Review previous runs — preview any report, open the HTML, or save it as a PDF to share.</p></div>
+  <!-- guided tour (spotlight coach-marks; shown once; reopen via ? Help) -->
+  <div id="tour" class="tour">
+    <div id="tour-hi"></div>
+    <div id="tour-pop" class="tour-pop">
+      <div class="tour-lbl" id="tour-lbl"></div>
+      <h3 id="tour-title"></h3>
+      <p id="tour-body"></p>
+      <div class="tour-foot">
+        <button class="wk-skip" onclick="tourEnd()">Skip tour</button>
+        <div class="wk-dots" id="tour-dots"></div>
+        <button class="wk-btn" id="tour-back" onclick="tourGo(-1)">Back</button>
+        <button class="wk-btn primary" id="tour-next" onclick="tourGo(1)">Next</button>
+      </div>
     </div>
-    <div class="wk-foot">
-      <button class="wk-skip" onclick="closeWalk()">Skip</button>
-      <div class="wk-dots" id="wk-dots"></div>
-      <button class="wk-btn" id="wk-back" onclick="walkStep(-1)">Back</button>
-      <button class="wk-btn primary" id="wk-next" onclick="walkStep(1)">Next</button>
-    </div>
-  </div></div>
+  </div>
 
   <script>
     var VPMAP={1920:'1920 · desktop',1440:'1440 · laptop',1024:'1024 · tablet-landscape',768:'768 · tablet',390:'390 · mobile',360:'360 · mobile-small'};
@@ -299,10 +298,25 @@ function appPage() {
         return pump();
       }).catch(function(err){btn.disabled=false;endProg(pre);$(pre+'-status').innerHTML='Request error: '+err;});
     }
+    // Grow an embedded report iframe to its FULL content height so the whole page scrolls (no tiny
+    // nested scrollbar). ResizeObserver tracks late layout (dashboard animations, lazy images) + a
+    // 12s poll fallback. Reused by Site Audit + Reports preview.
+    function autosize(f){
+      function fit(){try{var d=f.contentWindow.document;var h=Math.max(d.body.scrollHeight,d.documentElement.scrollHeight,d.body.offsetHeight);if(h>200)f.style.height=(h+48)+'px';}catch(e){}}
+      f.addEventListener('load',function(){
+        fit();
+        try{var d=f.contentWindow.document;
+          if(window.ResizeObserver){var ro=new ResizeObserver(fit);ro.observe(d.documentElement);if(d.body)ro.observe(d.body);}
+          if(d.fonts&&d.fonts.ready)d.fonts.ready.then(fit);
+          [].forEach.call(d.images,function(im){if(!im.complete)im.addEventListener('load',fit);});
+        }catch(e){}
+        var n=0,iv=setInterval(function(){fit();if(++n>48)clearInterval(iv);},250);
+      });
+    }
     function showReport(pre,route,label){
       var ph=$(pre+'-ph'); if(ph)ph.style.display='none';
       $(pre+'-link').innerHTML='<a href="'+route+'" target="_blank">↗ Open '+label+' in a new tab</a>';
-      var f=document.createElement('iframe');f.src=route;f.onload=function(){try{var d=f.contentWindow.document;var h=Math.max(d.body.scrollHeight,d.documentElement.scrollHeight)+40;f.style.height=h+'px';var n=0,iv=setInterval(function(){try{f.style.height=(Math.max(d.body.scrollHeight,d.documentElement.scrollHeight)+40)+'px'}catch(e){}if(++n>12)clearInterval(iv)},400);}catch(e){}};
+      var f=document.createElement('iframe');f.scrolling='no';autosize(f);f.src=route;
       $(pre+'-frame').appendChild(f);
     }
     function mark(pre,stage){var p=$(pre+'-pipe');if(!p)return;var els=p.querySelectorAll('span');var hit=false;els.forEach(function(s){if(s.dataset.s===stage){s.className='on';hit=true;}else if(!hit){s.className='done';}});}
@@ -350,19 +364,52 @@ function appPage() {
       var route=elm.dataset.route,json=elm.dataset.json;
       $('r-ph').style.display='none';
       $('r-preview').innerHTML='<div class="cmplink"><a href="'+route+'" target="_blank">↗ Open HTML</a> &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a></div>';
-      var fr=document.createElement('iframe');fr.src=route;fr.onload=function(){try{var dd=fr.contentWindow.document;var h=Math.max(dd.body.scrollHeight,dd.documentElement.scrollHeight)+40;fr.style.height=h+'px';var n=0,iv=setInterval(function(){try{fr.style.height=(Math.max(dd.body.scrollHeight,dd.documentElement.scrollHeight)+40)+'px'}catch(e){}if(++n>12)clearInterval(iv)},400);}catch(e){}};
+      var fr=document.createElement('iframe');fr.scrolling='no';autosize(fr);fr.src=route;
       $('r-preview').appendChild(fr);
     }
 
-    // First-use walkthrough (shown once per browser; reopen via ? Help)
-    var WK_KEY='sgenqa_onboarded_v1',WK=0,WK_N=5;
-    (function initDots(){var d=$('wk-dots');for(var i=0;i<WK_N;i++){var s=document.createElement('i');if(i===0)s.className='on';d.appendChild(s);}})();
-    function renderWalk(){[].forEach.call(document.querySelectorAll('.wk-step'),function(s){s.classList.toggle('on',+s.dataset.w===WK)});[].forEach.call($('wk-dots').children,function(d,i){d.classList.toggle('on',i===WK)});$('wk-back').disabled=WK===0;$('wk-next').textContent=WK===WK_N-1?'Done':'Next';}
-    function walkStep(dir){if(dir>0&&WK===WK_N-1){closeWalk();return;}WK=Math.max(0,Math.min(WK_N-1,WK+dir));renderWalk();}
-    function openWalk(){WK=0;renderWalk();$('walk').classList.add('on');}
-    function closeWalk(){$('walk').classList.remove('on');try{localStorage.setItem(WK_KEY,'1');}catch(e){}}
-    try{if(!localStorage.getItem(WK_KEY))openWalk();}catch(e){}
-    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&$('walk').classList.contains('on'))closeWalk();});
+    // Guided tour — spotlight coach-marks that switch tabs + highlight the real controls (shown once
+    // per browser; reopen via ? Help). Each step: {tab, target selector, title, body}.
+    var WK_KEY='sgenqa_onboarded_v2';
+    var TOUR=[
+      {tab:'audit',target:null,lbl:'Welcome',title:'SGEN Site QA',body:"Four offline tools to check any website's quality — audit, compare, verify a migration, and review reports. Nothing leaves this machine. Let me show you around."},
+      {tab:'audit',target:'.top nav',lbl:'Navigation',title:'Four tools, one app',body:'Switch tools here. Site Audit checks one site · Visual Comparison diffs old vs new · Post-Deployment Check verifies a migration · Reports holds past runs.'},
+      {tab:'audit',target:'#a-url',lbl:'Tool 1 · Site Audit',title:'Enter any site URL',body:'Point it at a live site. It crawls the pages and checks links, forms, responsive, accessibility, SEO, performance, security, and interaction — 128 rules, deterministic, no AI.'},
+      {tab:'audit',target:'#a-btn',lbl:'Tool 1 · Site Audit',title:'Run the audit',body:'Results appear below with a quality score, a launch-readiness verdict, and per-issue "Copy for dev" tickets carrying a stable Playwright/Cypress locator. Screenshots are filterable by page + viewport.'},
+      {tab:'visual',target:'#v-ref',lbl:'Tool 2 · Visual Comparison',title:'Old vs new, side by side',body:'Give a reference URL and a target URL. Every paired page is compared at each viewport on two axes: pixel match and structural diff (missing / extra / moved / restyled elements).'},
+      {tab:'visual',target:'#v-vps',lbl:'Tool 2 · Viewports',title:'Real device widths',body:'Industry-standard breakpoints — desktop, laptop, iPad, iPhone, Android. The 360–430 phone band is where most real-world breakage hides.'},
+      {tab:'cert',target:'#c-src',lbl:'Tool 3 · Post-Deployment Check',title:'Did everything make it across?',body:'After a migration, this inventories every page, section, image, menu and form on the source and verifies each exists intact on the new build — with a PASS / MINOR / FAIL verdict.'},
+      {tab:'reports',target:'[data-t=reports]',lbl:'Tool 4 · Reports',title:'Every run, kept',body:'Preview any past run, open its HTML, or save it as a PDF to hand off. Runs stay on this machine.'},
+      {tab:'audit',target:'.help-btn',lbl:'Done',title:"That's the tour",body:"Reopen it anytime from ? Help. Enter a URL and run your first audit whenever you're ready."}
+    ];
+    var TW=0;
+    (function initDots(){var d=$('tour-dots');for(var i=0;i<TOUR.length;i++){var s=document.createElement('i');d.appendChild(s);}})();
+    function tourShow(){
+      var st=TOUR[TW]; if(st.tab)tab(st.tab);
+      $('tour-lbl').textContent=st.lbl;$('tour-title').textContent=st.title;$('tour-body').textContent=st.body;
+      [].forEach.call($('tour-dots').children,function(d,i){d.classList.toggle('on',i===TW);});
+      $('tour-back').disabled=TW===0;$('tour-next').textContent=TW===TOUR.length-1?'Finish':'Next';
+      var hi=$('tour-hi'),pop=$('tour-pop');
+      var el=st.target?document.querySelector(st.target):null;
+      if(el){ el.scrollIntoView({behavior:'smooth',block:'center'});
+        setTimeout(function(){ var r=el.getBoundingClientRect(),pad=8;
+          hi.style.top=(r.top-pad)+'px';hi.style.left=(r.left-pad)+'px';hi.style.width=(r.width+pad*2)+'px';hi.style.height=(r.height+pad*2)+'px';hi.classList.add('show');
+          var pw=340,ph=pop.offsetHeight||200,gap=14,vw=innerWidth,vh=innerHeight;
+          var below=r.bottom+gap+ph<vh, left=Math.min(Math.max(12,r.left),vw-pw-12);
+          pop.style.left=left+'px';
+          pop.style.top=(below?r.bottom+gap:Math.max(12,r.top-gap-ph))+'px';
+        },300);
+      } else { hi.classList.remove('show');
+        pop.style.left=(innerWidth/2-170)+'px';pop.style.top=(innerHeight/2-120)+'px';
+      }
+    }
+    function tourGo(dir){ if(dir>0&&TW===TOUR.length-1){tourEnd();return;} TW=Math.max(0,Math.min(TOUR.length-1,TW+dir)); tourShow(); }
+    function openWalk(){ TW=0; $('tour').classList.add('on'); tourShow(); }
+    function tourEnd(){ $('tour').classList.remove('on'); $('tour-hi').classList.remove('show'); try{localStorage.setItem(WK_KEY,'1');}catch(e){} }
+    var closeWalk=tourEnd; // ? Help + Esc compatibility
+    try{if(!localStorage.getItem(WK_KEY))setTimeout(openWalk,350);}catch(e){}
+    document.addEventListener('keydown',function(e){if($('tour').classList.contains('on')){if(e.key==='Escape')tourEnd();else if(e.key==='ArrowRight')tourGo(1);else if(e.key==='ArrowLeft')tourGo(-1);}});
+    addEventListener('resize',function(){if($('tour').classList.contains('on'))tourShow();});
   </script></body></html>`;
 }
 
@@ -455,17 +502,20 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    if (req.method === 'GET' && p === '/api/pdf') return apiPdf(req, res, u);
-    if (req.method === 'POST' && p === '/api/run') return apiRun(req, res);
-    if (req.method === 'POST' && p === '/api/visual') return apiVisual(req, res);
-    if (req.method === 'POST' && p === '/api/certify') return apiCertify(req, res);
+    // await async handlers so their rejections are CAUGHT here (a bare `return apiRun()` would let a
+    // rejection escape to an unhandled promise rejection — which crashes Node. Stress-test found this.)
+    if (req.method === 'GET' && p === '/api/pdf') return await apiPdf(req, res, u);
+    if (req.method === 'POST' && p === '/api/run') return await apiRun(req, res);
+    if (req.method === 'POST' && p === '/api/visual') return await apiVisual(req, res);
+    if (req.method === 'POST' && p === '/api/certify') return await apiCertify(req, res);
     return send(res, 404, 'text/plain', 'not found');
-  } catch (e) { send(res, 500, 'text/plain', 'server error: ' + (e && e.message || e)); }
+  } catch (e) { try { if (!res.headersSent) send(res, 500, 'text/plain', 'server error: ' + (e && e.message || e)); else res.end(); } catch (_) {} }
 });
 
 // 1 — Site Audit (unchanged engine path)
 async function apiRun(req, res) {
   let opts; try { opts = JSON.parse(await readBody(req) || '{}'); } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad json' })); }
+  if (!opts || typeof opts !== 'object' || Array.isArray(opts)) opts = {}; // guard null/array/scalar JSON
   const url = norm(opts.url); if (!url) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'pass a site URL' }));
   let host; try { host = new URL(url).host; } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'invalid URL' })); }
   const id = safe(host) + '-' + Date.now(), outDir = path.join(RUNS, id);
@@ -485,6 +535,7 @@ async function apiRun(req, res) {
 // 2 — Visual Comparison (frozen visual-match engine)
 async function apiVisual(req, res) {
   let o; try { o = JSON.parse(await readBody(req) || '{}'); } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad json' })); }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) o = {}; // guard null/array/scalar JSON
   const ref = norm(o.ref), tgt = norm(o.target);
   if (!ref || !tgt) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'pass Reference and Target URLs' }));
   const SCOPE = { single: 1, multiple: o.maxPages || 8, sitemap: o.maxPages || 80, full: o.maxPages || 150 };
@@ -505,6 +556,7 @@ async function apiVisual(req, res) {
 // 3 — Post-Deployment Check (frozen migration-certification pipeline; mirrors sgen-qa-certify.js orchestration)
 async function apiCertify(req, res) {
   let o; try { o = JSON.parse(await readBody(req) || '{}'); } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad json' })); }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) o = {}; // guard null/array/scalar JSON
   const source = norm(o.source), target = norm(o.target);
   if (!source || !target) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'pass Source and Target URLs' }));
   const maxPages = o.maxPages || 30, sitemapOnly = !!o.sitemapOnly;
@@ -520,7 +572,7 @@ async function apiCertify(req, res) {
     const at = new Date().toISOString();
     let auditResult = null, visualResult = null;
     if (o.production !== false) { emit({ t: 'p', pct: 42, phase: 'production validation — auditing target', stage: 'production' }); try { auditResult = await runAudit(target, { maxPages, render: true, screensDir: path.join(outDir, 'shots'), log: () => {} }); } catch (e) {} }
-    if (o.visual) { emit({ t: 'p', pct: 62, phase: 'visual comparison — SGEN breakpoints', stage: 'visual' }); try { visualResult = await visualMatch.run(source, target, { maxPages, outDir: path.join(outDir, 'visual'), log: () => {} }); } catch (e) {} }
+    if (o.visual) { emit({ t: 'p', pct: 62, phase: 'visual comparison — device breakpoints', stage: 'visual' }); try { visualResult = await visualMatch.run(source, target, { maxPages, outDir: path.join(outDir, 'visual'), log: () => {} }); } catch (e) {} }
     emit({ t: 'p', pct: 82, phase: 'certifying', stage: 'certification' });
     const idRegistry = new IdRegistry(path.join(DATA, 'inventory-ids.jsonl'));
     const r = certifyMigration(refCrawl.pages, tgtCrawl.pages, {
@@ -536,6 +588,10 @@ async function apiCertify(req, res) {
 }
 
 server.requestTimeout = 0; server.headersTimeout = 0;
+// Final safety net: a single bad request must NEVER take the whole server down. Log + keep serving.
+// (Belt-and-suspenders behind the per-handler guards + awaited dispatch.)
+process.on('unhandledRejection', (e) => { process.stderr.write('[unhandledRejection] ' + (e && e.message || e) + '\n'); });
+process.on('uncaughtException', (e) => { process.stderr.write('[uncaughtException] ' + (e && e.stack || e) + '\n'); });
 fs.mkdirSync(RUNS, { recursive: true }); fs.mkdirSync(DATA, { recursive: true });
 server.listen(PORT, '127.0.0.1', () => {
   process.stderr.write(`\nSGEN Site QA → http://127.0.0.1:${PORT}\n(4 tools: Site Audit · Visual Comparison · Post-Deployment Check · Reports. Ctrl+C to stop.)\n`);

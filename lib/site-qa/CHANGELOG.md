@@ -5,7 +5,42 @@
 
 ## [Unreleased]
 ### Next
+- Phase 2: inspector lenses + Interaction Integrity top-line score + rendered-DOM link crawl.
 - Wider real-site validation + production-scale load tuning (operational).
+
+---
+
+## 2026-07-09 — V2 Phase 1  (Developer-first platform: contract · providers · +32 rules) — E 2.3.0 · R 1.9.0 · Rep 1.2.0
+### Added — platform (the durable foundation)
+- **Finding Contract v1** (ADR-0003, `contract.js`, `schemas/finding-contract.schema.json`): one canonical
+  finding shape every rule emits; five-question invariant (what/where/certainty/why/how). Frozen.
+- **Developer Locator Object** + **Evidence Providers** (`lib/evidence-providers.js`): DOM/Render providers
+  build a stable, ranked-strategy locator + deterministic `locatorId` + copy-as CSS/XPath/querySelector/
+  Playwright/Cypress. Network/Build providers stubbed for Phase 3. Screenshots stay optional/lazy.
+- **Single canonical source** (`lib/report-contract.js`): JSON / Markdown / Copy-MD all derive from the
+  contract — no format-specific reconstruction.
+- **Services:** `lib/fingerprint` (extends the content-addressed digest), `lib/locator`, `lib/uri-validate`,
+  `lib/rule-deps` (dependsOn/skipIf).
+- **Rule metadata:** `inspector` · `interaction` · `cost` · `evidenceQuality` (Verified/Derived/Heuristic) ·
+  `impact{seo,a11y,security,devEffort}` (no "affected users" — not measurable offline) · `fixability` ·
+  `deprecatedIn`/`lastModified`.
+### Added — rules (+32; catalog: `docs/RULE-CATALOG-v2.md`)
+- **Interaction:** LINK-006..010, DOM-010..013 (dead links/buttons, nesting, disabled-active, mailto/tel).
+- **Security:** SEC-011..015 (header split), SEC-016..018 (cookie flags), SEC-019..022 (.git/backup/config/
+  dir-listing exposure), SEC-023 (dangerous JS, heuristic), SEC-024/025 (transport).
+- **SEO:** SEO-031 (hreflang), SEO-035/036 (index-signal conflicts), SEO-037/038 (thin content / readability).
+- **Stability:** DOM-003 (duplicate ids), DOM-004 (DOM size), FORM-002 (field semantics).
+### Changed
+- **qa-site** now emits granular security-header rules (SEC-011..015) instead of the lumped **SEC-010**
+  (kept, marked `deprecatedIn: 2.0`, still emitted by **qa-migration**). Migration note: JSON consumers that
+  keyed on SEC-010 for qa-site should switch to SEC-011..015.
+- Dev-ticket Markdown (Copy-MD) now derives from the contract and carries certainty · launch-tier ·
+  fingerprint · copy-as locator (richer than v1; format changed, not purely additive).
+### Notes
+- Additive: frozen scoring formula unchanged; existing-rule findings byte-identical; historical certs
+  reproduce. Overall scores move only on sites that have the newly-detected defects (by design).
+- Perf: +0.75 ms/page static · projection ~4 ms/scan · +5 bounded site-probe GETs/origin · no memory leak.
+- Deferred (roadmap-tracked): image/video/news sitemaps, broken-markup, broken-fonts, near-duplicate.
 
 ---
 
