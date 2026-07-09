@@ -5,7 +5,7 @@
 // engines the CLIs use — this file is UI-exposure ONLY and modifies none of them:
 //   1. Site Audit          -> runAudit + renderReport                (/api/run)
 //   2. Visual Comparison   -> visual-match.run + report-visual.render (/api/visual)
-//   3. Migration Cert.     -> discoverPages + certifyMigration        (/api/certify)
+//   3. Post-Deployment Check (engine: migration certification) -> discoverPages + certifyMigration (/api/certify)
 //   4. Reports             -> lists _ui-runs + qualification portfolio (/api/reports)
 //
 //   sgen qa-serve [--port 7878] [--open]
@@ -43,10 +43,12 @@ function appPage() {
   @media(max-width:640px){ .top{gap:8px} .top .env{display:none} .top nav{margin-left:0;width:100%;order:3} .top .brand{flex:1 1 auto} }
   .top .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;font-size:15px}
   .top .brand .mk{width:28px;height:28px;border-radius:8px;background:var(--brand-solid);display:grid;place-items:center}
-  .top nav{display:flex;gap:2px;margin-left:8px;flex-wrap:wrap}
-  .top nav button{background:none;border:0;color:var(--ink-soft);font-size:13.5px;font-weight:560;padding:8px 13px;border-radius:8px;cursor:pointer;font-family:inherit}
-  .top nav button:hover{background:var(--surface-2);color:var(--ink)}
-  .top nav button.on{background:var(--brand-solid);color:#fff}
+  .top nav{display:flex;gap:8px;margin-left:12px;flex-wrap:wrap;flex:1}
+  .top nav button{background:var(--surface-2);border:1px solid var(--line);color:var(--ink-soft);font-size:14px;font-weight:650;padding:9px 16px;border-radius:11px;cursor:pointer;font-family:inherit;text-align:left;display:flex;flex-direction:column;gap:1px;transition:border-color .12s ease,transform .12s ease}
+  .top nav button .nd{font-size:10.5px;font-weight:450;color:var(--ink-faint);letter-spacing:.01em}
+  .top nav button:hover{border-color:var(--brand);color:var(--ink);transform:translateY(-1px)}
+  .top nav button.on{background:var(--brand-solid);border-color:var(--brand-solid);color:#fff}
+  .top nav button.on .nd{color:rgba(255,255,255,.75)}
   .top .env{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
   html,body{max-width:100%;overflow-x:hidden}
   .wrap{width:100%;max-width:none;margin:0;padding:26px clamp(22px,4vw,56px) 60px;box-sizing:border-box}
@@ -145,10 +147,10 @@ function appPage() {
   <div class="top">
     <div class="brand"><span class="mk"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>SGEN Migration QA</div>
     <nav>
-      <button data-t="audit" class="on" onclick="tab('audit')">1 · Site Audit</button>
-      <button data-t="visual" onclick="tab('visual')">2 · Visual Comparison</button>
-      <button data-t="cert" onclick="tab('cert')">3 · Migration Certification</button>
-      <button data-t="reports" onclick="tab('reports');loadReports()">4 · Reports</button>
+      <button data-t="audit" class="on" onclick="tab('audit')"><b>1 · Site Audit</b><span class="nd">quality-check one site</span></button>
+      <button data-t="visual" onclick="tab('visual')"><b>2 · Visual Comparison</b><span class="nd">old vs new, side by side</span></button>
+      <button data-t="cert" onclick="tab('cert')"><b>3 · Post-Deployment Check</b><span class="nd">did everything make it across?</span></button>
+      <button data-t="reports" onclick="tab('reports');loadReports()"><b>4 · Reports</b><span class="nd">past runs · HTML · PDF</span></button>
     </nav>
     <button class="help-btn" onclick="openWalk()" title="Reopen the walkthrough">? Help</button>
     <div class="env">127.0.0.1:${PORT} · ${gitCommit} · real</div>
@@ -200,7 +202,7 @@ function appPage() {
 
     <!-- 3 MIGRATION CERTIFICATION -->
     <section class="panel" id="p-cert">
-      <h2 class="tt">Migration Certification</h2><p class="sub">Validates that a migrated site faithfully represents the source and is safe to deploy. Runs the full frozen pipeline with stable inventory IDs, evidence, and a three-state verdict. No CLI required.</p>
+      <h2 class="tt">Post-Deployment Check</h2><p class="sub">Answers one question: <b>did everything make it across?</b> Inventories every page, section, image, menu and form on the source site, then verifies each one exists intact on the new build — with evidence per item and a PASS / PASS&nbsp;WITH&nbsp;MINOR&nbsp;ISSUES / FAIL verdict. Run it after deploying the rebuild, before go-live.</p>
       <div class="toolgrid">
         <div class="col-left"><div class="card">
           <label class="fld" style="min-width:0">Source URL<input id="c-src" type="text" placeholder="original site" spellcheck="false"></label>
@@ -219,14 +221,14 @@ function appPage() {
           <div class="glab" style="margin-bottom:7px">Pipeline</div>
           <div class="pipe" id="c-pipe"><span data-s="inventory">Inventory</span><span data-s="completeness">Completeness</span><span data-s="visual">Visual</span><span data-s="production">Production</span><span data-s="certification">Certification</span></div>
           <div class="pbar" id="c-pbar"><div class="pfill" id="c-pfill"></div></div><div class="status" id="c-status"></div><div class="cmplink" id="c-link"></div><div id="c-frame"></div>
-          <div class="placeholder" id="c-ph"><b>Certification results appear here</b>Run the pipeline to see inventory summary, completeness, the verdict, and findings with evidence.</div>
+          <div class="placeholder" id="c-ph"><b>Post-deployment results appear here</b>Run the check to see what was found on the source, what made it across, the verdict, and findings with evidence.</div>
         </div>
       </div>
     </section>
 
     <!-- 4 REPORTS -->
     <section class="panel" id="p-reports">
-      <h2 class="tt">Reports</h2><p class="sub">Review previous scans, certifications, evidence, and exported results. Select a run to preview its report; open HTML (evidence + screenshots + versions) or raw JSON.</p>
+      <h2 class="tt">Reports</h2><p class="sub">Review previous runs. Select one to preview its report; open the HTML or save it as a PDF to share.</p>
       <div class="rgrid">
         <div class="col-left">
           <div class="rfilters" id="r-filters">
@@ -253,8 +255,8 @@ function appPage() {
       <div class="wk-step on" data-w="0"><div class="lbl">Welcome</div><h3>SGEN Migration QA</h3><p>SGEN Migration QA verifies that a migrated website is <b>complete</b>, <b>visually accurate</b>, and <b>production safe</b>. Four independent tools, one local workspace — no data leaves this machine.</p></div>
       <div class="wk-step" data-w="1"><div class="lbl">Tool 1</div><h3>Site Audit</h3><p>Checks a single site for technical quality, accessibility, security, performance, and production issues.</p><div class="io"><div><div class="k">Inputs</div><ul><li>URL</li><li>Scan options</li></ul></div><div><div class="k">Output</div><ul><li>Findings</li><li>Evidence</li><li>Report</li></ul></div></div></div>
       <div class="wk-step" data-w="2"><div class="lbl">Tool 2</div><h3>Visual Comparison</h3><p>Compares a reference site and target site visually across SGEN breakpoints.</p><div class="io"><div><div class="k">Inputs</div><ul><li>Reference URL</li><li>Target URL</li><li>Pages · Viewports · Axes</li></ul></div><div><div class="k">Output</div><ul><li>Similarity score</li><li>Screenshots</li><li>Differences</li></ul></div></div></div>
-      <div class="wk-step" data-w="3"><div class="lbl">Tool 3</div><h3>Migration Certification</h3><p>Validates that a migrated site faithfully represents the source and is safe to deploy.</p><div class="pipe-mini">Inventory → Completeness → Visual Comparison → Production Validation → Certification</div></div>
-      <div class="wk-step" data-w="4"><div class="lbl">Tool 4</div><h3>Reports</h3><p>Review previous scans, certifications, evidence, and exported results — preview any run, or open its HTML / JSON.</p></div>
+      <div class="wk-step" data-w="3"><div class="lbl">Tool 3</div><h3>Post-Deployment Check</h3><p>Did everything make it across? Every page, section, image, menu and form on the old site is verified to exist intact on the new build.</p><div class="pipe-mini">Inventory → Completeness → Visual Comparison → Production Validation → Certification</div></div>
+      <div class="wk-step" data-w="4"><div class="lbl">Tool 4</div><h3>Reports</h3><p>Review previous runs — preview any report, open the HTML, or save it as a PDF to share.</p></div>
     </div>
     <div class="wk-foot">
       <button class="wk-skip" onclick="closeWalk()">Skip</button>
@@ -273,7 +275,7 @@ function appPage() {
     function endProg(pre){setProg(pre,100,'');setTimeout(function(){$(pre+'-pbar').classList.remove('on')},400);}
     // desktop notification when a scan finishes — fires as a native OS toast when the tab is in the
     // background or the window unfocused (multitasking), plus a soft chime + title flash either way.
-    var TOOL_NAME={a:'Site Audit',v:'Visual Comparison',c:'Migration Certification'};
+    var TOOL_NAME={a:'Site Audit',v:'Visual Comparison',c:'Post-Deployment Check'};
     var baseTitle=document.title;
     function chime(){try{var ctx=new (window.AudioContext||window.webkitAudioContext)();var o=ctx.createOscillator(),g=ctx.createGain();o.connect(g);g.connect(ctx.destination);o.frequency.value=880;g.gain.setValueAtTime(0.0001,ctx.currentTime);g.gain.exponentialRampToValueAtTime(0.06,ctx.currentTime+0.02);g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.5);o.start();o.stop(ctx.currentTime+0.55);}catch(e){}}
     function flashTitle(msg){var n=0,iv=setInterval(function(){document.title=(n%2?baseTitle:msg);if(++n>9||!document.hidden){clearInterval(iv);document.title=baseTitle;}},900);}
@@ -322,11 +324,11 @@ function appPage() {
         $('v-status').innerHTML='Done — overall match '+m.overall+'% · '+m.pairs+' page(s) · '+m.viewports+' viewport(s)'+(m.sharp?'':' · (pixel diff off: sharp missing)');
         showReport('v','/visual/'+m.id,'visual report');});}
 
-    // 3 Migration Certification
+    // 3 Post-Deployment Check
     function runCert(){var src=$('c-src').value.trim(),tgt=$('c-tgt').value.trim();if(!src||!tgt){$('c-status').textContent='Enter both Source and Target URLs.';return;}
       $('c-pipe').querySelectorAll('span').forEach(function(s){s.className=''});
       stream('/api/certify',{source:src,target:tgt,sitemapOnly:$('c-sitemap').checked,visual:$('c-visual').checked,production:$('c-prod').checked,maxPages:+$('c-max').value||30},'c',function(m){
-        if(!m.ok){$('c-status').textContent='Certification failed: '+(m.error||'unknown');return;}
+        if(!m.ok){$('c-status').textContent='Post-deployment check failed: '+(m.error||'unknown');return;}
         $('c-pipe').querySelectorAll('span').forEach(function(s){s.className='done'});
         $('c-status').innerHTML='<b>'+m.verdict+'</b> — passed '+m.tally.passed+' · warnings '+m.tally.warning+' · failed '+m.tally.failed+' · manual '+m.tally.manual+' · approved '+m.tally.approved;
         showReport('c','/certify/'+m.id,'certification report');});}
@@ -339,7 +341,7 @@ function appPage() {
       var el=$('r-list'),rows=[],f=R_FILTER;
       if(f==='all'||f!=='case'){ (R_DATA.runs||[]).filter(function(x){return f==='all'||x.kind===f;}).forEach(function(x){
         var route=x.kind==='visual'?'/visual/'+x.id:(x.kind==='cert'?'/certify/'+x.id:'/report/'+x.id);
-        rows.push('<div class="ritem" data-route="'+route+'" data-json="'+route+'/'+x.json+'" onclick="selectReport(this)"><span class="tag '+(x.kind==='visual'?'visual':x.kind==='cert'?'cert':'audit')+'">'+(x.kind==='visual'?'Visual':x.kind==='cert'?'Cert':'Audit')+'</span><span class="nm">'+x.host+'</span><span class="when">'+x.when+'</span></div>');});}
+        rows.push('<div class="ritem" data-route="'+route+'" data-json="'+route+'/'+x.json+'" onclick="selectReport(this)"><span class="tag '+(x.kind==='visual'?'visual':x.kind==='cert'?'cert':'audit')+'">'+(x.kind==='visual'?'Visual':x.kind==='cert'?'Post-Deploy':'Audit')+'</span><span class="nm">'+x.host+'</span><span class="when">'+x.when+'</span></div>');});}
       if(f==='all'||f==='case'){ (R_DATA.cases||[]).forEach(function(c){rows.push('<div class="ritem"><span class="tag case">Case</span><span class="nm">'+c.name+'</span><span class="when">'+(c.verdict||'')+' · '+(c.metrics?c.metrics.pages+'p':'')+'</span></div>');});}
       el.innerHTML=rows.length?rows.join(''):'<div class="hint">No runs in this filter yet.</div>';
     }
@@ -347,7 +349,7 @@ function appPage() {
       [].forEach.call(document.querySelectorAll('#r-list .ritem'),function(i){i.classList.remove('sel')});elm.classList.add('sel');
       var route=elm.dataset.route,json=elm.dataset.json;
       $('r-ph').style.display='none';
-      $('r-preview').innerHTML='<div class="cmplink"><a href="'+route+'" target="_blank">↗ Open HTML</a> &nbsp; <a href="'+json+'" target="_blank">Open JSON</a></div>';
+      $('r-preview').innerHTML='<div class="cmplink"><a href="'+route+'" target="_blank">↗ Open HTML</a> &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a></div>';
       var fr=document.createElement('iframe');fr.src=route;fr.onload=function(){try{var dd=fr.contentWindow.document;var h=Math.max(dd.body.scrollHeight,dd.documentElement.scrollHeight)+40;fr.style.height=h+'px';var n=0,iv=setInterval(function(){try{fr.style.height=(Math.max(dd.body.scrollHeight,dd.documentElement.scrollHeight)+40)+'px'}catch(e){}if(++n>12)clearInterval(iv)},400);}catch(e){}};
       $('r-preview').appendChild(fr);
     }
@@ -394,6 +396,35 @@ function splitRoute(pathname, prefix) {
   return slash < 0 ? { id: safe(rest), asset: '' } : { id: safe(rest.slice(0, slash)), asset: rest.slice(slash + 1) };
 }
 
+// ---- PDF export: render the served report through headless Chromium and stream a real PDF -------
+// GET /api/pdf?route=/report/<id>  (also /visual/<id>, /certify/<id>). Renders THROUGH the local
+// server route (not file://) so <base>-relative shots/screenshots resolve exactly as in the browser.
+async function apiPdf(req, res, u) {
+  const route = String(u.searchParams.get('route') || '');
+  const m = route.match(/^\/(report|visual|certify)\/([a-z0-9._-]+)$/i);
+  if (!m) return send(res, 400, 'text/plain', 'bad route');
+  const id = safe(m[2]);
+  if (!fs.existsSync(path.join(RUNS, id))) return send(res, 404, 'text/plain', 'run not found');
+  let chromium;
+  try { ({ chromium } = require('playwright')); }
+  catch (e) { return send(res, 501, 'text/plain', 'PDF export needs Playwright (npx playwright install chromium)'); }
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.goto(`http://127.0.0.1:${PORT}/${m[1]}/${id}`, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.waitForTimeout(1200); // client-side dashboard/scripts settle
+    await page.emulateMedia({ media: 'screen' }); // keep the real dark report look, not print styles
+    const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '8mm', right: '8mm' } });
+    await browser.close(); browser = null;
+    res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${id}.pdf"`, 'content-length': pdf.length });
+    res.end(pdf);
+  } catch (e) {
+    if (browser) try { await browser.close(); } catch (_) {}
+    send(res, 500, 'text/plain', 'PDF export failed: ' + (e && e.message || e));
+  }
+}
+
 // ---- report history listing ---------------------------------------------------------------------
 function listRuns() {
   if (!fs.existsSync(RUNS)) return [];
@@ -424,6 +455,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (req.method === 'GET' && p === '/api/pdf') return apiPdf(req, res, u);
     if (req.method === 'POST' && p === '/api/run') return apiRun(req, res);
     if (req.method === 'POST' && p === '/api/visual') return apiVisual(req, res);
     if (req.method === 'POST' && p === '/api/certify') return apiCertify(req, res);
@@ -470,7 +502,7 @@ async function apiVisual(req, res) {
   } catch (e) { emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
 }
 
-// 3 — Migration Certification (frozen pipeline; mirrors sgen-qa-certify.js orchestration)
+// 3 — Post-Deployment Check (frozen migration-certification pipeline; mirrors sgen-qa-certify.js orchestration)
 async function apiCertify(req, res) {
   let o; try { o = JSON.parse(await readBody(req) || '{}'); } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad json' })); }
   const source = norm(o.source), target = norm(o.target);
@@ -506,6 +538,6 @@ async function apiCertify(req, res) {
 server.requestTimeout = 0; server.headersTimeout = 0;
 fs.mkdirSync(RUNS, { recursive: true }); fs.mkdirSync(DATA, { recursive: true });
 server.listen(PORT, '127.0.0.1', () => {
-  process.stderr.write(`\nSGEN Migration QA Suite → http://127.0.0.1:${PORT}\n(4 tools: Site Audit · Visual Comparison · Migration Certification · Reports. Ctrl+C to stop.)\n`);
+  process.stderr.write(`\nSGEN Migration QA Suite → http://127.0.0.1:${PORT}\n(4 tools: Site Audit · Visual Comparison · Post-Deployment Check · Reports. Ctrl+C to stop.)\n`);
   if (arg('open', false)) { try { spawn(process.platform === 'win32' ? 'cmd' : 'sh', process.platform === 'win32' ? ['/c', 'start', '', `http://127.0.0.1:${PORT}`] : ['-c', `xdg-open http://127.0.0.1:${PORT}`], { detached: true, stdio: 'ignore' }).unref(); } catch (e) {} }
 });
