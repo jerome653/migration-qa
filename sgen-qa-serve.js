@@ -40,12 +40,29 @@ function appPage() {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SGEN Site QA</title><style>${STYLE}
   :root{--nav-h:56px}
   .top{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px 12px;padding:8px 20px;min-height:var(--nav-h);flex-wrap:wrap}
-  @media(max-width:640px){ .top{gap:8px} .top .env{display:none} .top nav{margin-left:0;width:100%;order:3} .top .brand{flex:1 1 auto} }
+  /* keep the 4 tool tabs + brand on ONE row at every app width — collapse the OTHER side first,
+     in priority order: env (widest, least useful) → help → update, then compact the tabs. */
+  @media(max-width:1024px){ .top .env{display:none} .top nav button .nd{display:none} .top nav button{padding:8px 12px} }
+  @media(max-width:900px){ .help-btn{display:none} }
+  @media(max-width:760px){
+    .top{gap:8px 8px;flex-wrap:nowrap}
+    .top .brand{flex:0 0 auto;font-size:13px}.top .brand .mk{width:24px;height:24px}
+    .top nav{margin-left:8px;flex:1 1 auto;flex-wrap:nowrap;min-width:0;gap:6px}
+    .top nav button{flex:1 1 0;min-width:0;padding:8px 8px;text-align:center;align-items:center}
+    .top nav button b{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+    .top nav button .nd{display:none}
+    .top .env{display:none}.top .upd{display:none!important}
+    .help-btn{padding:6px 9px;flex:0 0 auto}
+  }
+  @media(max-width:440px){ .top .brand{font-size:0;gap:0} .help-btn{display:none} .top nav button b{font-size:11px} }
   .top .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;font-size:15px}
   .top .brand .mk{width:28px;height:28px;border-radius:8px;background:var(--brand-solid);display:grid;place-items:center}
-  .top nav{display:flex;gap:8px;margin-left:12px;flex-wrap:wrap;flex:1}
-  .top nav button{background:var(--surface-2);border:1px solid var(--line);color:var(--ink-soft);font-size:14px;font-weight:650;padding:9px 16px;border-radius:11px;cursor:pointer;font-family:inherit;text-align:left;display:flex;flex-direction:column;gap:1px;transition:border-color .12s ease,transform .12s ease}
-  .top nav button .nd{font-size:10.5px;font-weight:450;color:var(--ink-faint);letter-spacing:.01em}
+  /* nav ALWAYS one row — never wraps internally; buttons shrink and the right-side cluster
+     (help/update/env) yields first. .top wraps so those items drop below, never a tool. */
+  .top nav{display:flex;gap:8px;margin-left:12px;flex-wrap:nowrap;flex:1 1 auto;min-width:0}
+  .top nav button{background:var(--surface-2);border:1px solid var(--line);color:var(--ink-soft);font-size:14px;font-weight:650;padding:9px 16px;border-radius:11px;cursor:pointer;font-family:inherit;text-align:left;display:flex;flex-direction:column;gap:1px;flex:0 1 auto;min-width:0;transition:border-color .12s ease,transform .12s ease}
+  .top nav button b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .top nav button .nd{font-size:10.5px;font-weight:450;color:var(--ink-faint);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   .top nav button:hover{border-color:var(--brand);color:var(--ink);transform:translateY(-1px)}
   .top nav button.on{background:var(--brand-solid);border-color:var(--brand-solid);color:#fff}
   .top nav button.on .nd{color:rgba(255,255,255,.75)}
@@ -66,6 +83,14 @@ function appPage() {
   input[type=number]{width:70px;font-family:var(--mono);padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2);color:var(--ink)}
   .run{background:var(--brand-solid);color:#fff;border:0;border-radius:9px;padding:11px 22px;font-size:14px;font-weight:650;cursor:pointer;white-space:nowrap;font-family:inherit}
   .run:disabled{opacity:.55;cursor:default}
+  .run.ghost{background:var(--surface-2);color:var(--ink-soft);border:1px solid var(--line-strong);margin-left:8px}
+  .run.ghost:hover{color:var(--ink);border-color:var(--ink-faint)}
+  .run.retry{background:transparent;color:var(--brand);border:1px solid var(--brand);margin-left:8px}
+  .run.retry:hover{background:var(--surface-2)}
+  .upd{display:flex;align-items:center;gap:8px;margin-left:10px}
+  .upd-btn{background:transparent;border:1px solid var(--line-strong);color:var(--ink-soft);border-radius:8px;padding:6px 12px;font-size:12px;font-family:inherit;cursor:pointer}
+  .upd-btn:hover{color:var(--ink);border-color:var(--brand)}.upd-btn:disabled{opacity:.55;cursor:default}
+  .upd-st{font-family:var(--mono);font-size:11px;color:var(--ink-faint);white-space:nowrap}
   .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
   .chip{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer;user-select:none}
   .chip input{accent-color:var(--brand-solid)}
@@ -83,7 +108,7 @@ function appPage() {
   .pipe{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);font-size:11.5px}
   .pipe span{padding:4px 9px;border:1px solid var(--line);border-radius:99px;color:var(--ink-faint)}
   .pipe span.on{border-color:var(--brand);color:var(--brand);background:var(--surface-2)}
-  .pipe span.done{border-color:var(--ok,#E7C87A);color:var(--ok,#E7C87A)}
+  .pipe span.done{border-color:var(--ok,#C8181C);color:var(--ok,#C8181C)}
   .rlist{display:flex;flex-direction:column;gap:8px}
   .ritem{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:13px}
   .ritem .tag{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.04em}
@@ -149,6 +174,7 @@ function appPage() {
       <button data-t="reports" onclick="tab('reports');loadReports()"><b>4 · Reports</b><span class="nd">past runs · HTML · PDF</span></button>
     </nav>
     <button class="help-btn" onclick="openWalk()" title="Reopen the walkthrough">? Help</button>
+    <div class="upd" id="upd" style="display:none"><button class="upd-btn" id="upd-btn" onclick="updClick()">Check for updates</button><span class="upd-st" id="upd-st"></span></div>
     <div class="env">127.0.0.1:${PORT} · ${gitCommit} · real</div>
   </div>
   <div class="wrap">
@@ -166,7 +192,7 @@ function appPage() {
             <label class="cfg-g">Save report as <input id="a-save" type="text" placeholder="reference name" style="flex:1;min-width:120px"><span class="help" tabindex="0">?<span class="tip"><b>Save report as</b>Stores this scan as a reference for future comparisons.<em>Example: save the live site, then compare staging to it.</em></span></span></label>
             <label class="cfg-g">Compare against <select id="a-baseline" style="flex:1;min-width:120px"><option value="">— none —</option></select><span class="help" tabindex="0">?<span class="tip"><b>Compare against</b>Optional. Compare this audit against a previous saved scan.<em>Example: diff staging vs a saved live baseline.</em></span></span></label>
           </div>
-          <div class="cfg-action"><button class="run" id="a-btn" onclick="runAudit()">Run audit</button></div>
+          <div class="cfg-action"><button class="run" id="a-btn" onclick="runAudit()">Run audit</button><button class="run ghost" id="a-cancel" onclick="cancelScan('a')" style="display:none">Cancel</button><button class="run retry" id="a-retry" onclick="retryScan('a')" style="display:none">Retry</button></div>
         </div>
       </div>
       <div class="pbar" id="a-pbar"><div class="pfill" id="a-pfill"></div></div><div class="status" id="a-status"></div><div class="cmplink" id="a-link"></div><div id="a-frame"></div>
@@ -191,7 +217,7 @@ function appPage() {
               Each paired page is compared at every selected viewport on two axes:
               <b style="display:inline;color:var(--ink)">pixel match</b> (visual difference %) and
               <b style="display:inline;color:var(--ink)">structural diff</b> — elements <b style="display:inline;color:var(--ink)">missing</b>, <b style="display:inline;color:var(--ink)">extra</b>, <b style="display:inline;color:var(--ink)">moved</b>, or <b style="display:inline;color:var(--ink)">restyled</b> vs the reference. The full check always runs.</div></div>
-          <div class="row" style="margin-top:16px"><button class="run" id="v-btn" onclick="runVisual()">Run visual comparison</button></div>
+          <div class="row" style="margin-top:16px"><button class="run" id="v-btn" onclick="runVisual()">Run visual comparison</button><button class="run ghost" id="v-cancel" onclick="cancelScan('v')" style="display:none">Cancel</button><button class="run retry" id="v-retry" onclick="retryScan('v')" style="display:none">Retry</button></div>
         </div></div>
         <div class="col-right">
           <div class="pbar" id="v-pbar"><div class="pfill" id="v-pfill"></div></div><div class="status" id="v-status"></div><div class="cmplink" id="v-link"></div><div id="v-frame"></div>
@@ -215,7 +241,7 @@ function appPage() {
           </div></div>
           <div class="grp"><div class="glab">Evidence <span class="help" tabindex="0">?<span class="tip"><b>Evidence</b>Every finding must have proof (screenshot / DOM / network). Findings without available proof are marked <b style="display:inline">Manual Verification Required</b> — never silently passed.</span></span></div>
             <div class="hint">Findings carry inventory IDs, status, and an evidence package.</div></div>
-          <div class="row" style="margin-top:16px"><button class="run" id="c-btn" onclick="runCert()">Run certification</button></div>
+          <div class="row" style="margin-top:16px"><button class="run" id="c-btn" onclick="runCert()">Run certification</button><button class="run ghost" id="c-cancel" onclick="cancelScan('c')" style="display:none">Cancel</button><button class="run retry" id="c-retry" onclick="retryScan('c')" style="display:none">Retry</button></div>
         </div></div>
         <div class="col-right">
           <div class="glab" style="margin-bottom:7px">Pipeline</div>
@@ -289,14 +315,25 @@ function appPage() {
         try{var nt=new Notification('SGEN Site QA \\u2014 '+tool+' finished',{body:body,tag:'sgenqa-'+pre,requireInteraction:false});nt.onclick=function(){try{window.focus();}catch(e){}nt.close();};}catch(e){}
       }
     }
+    // per-tool abort controllers + last-run args, so a scan can be Cancelled mid-flight and Retried.
+    var CTRL={},LAST={};
+    function showCtl(pre,which){ // which: 'run' | 'cancel' | 'retry'
+      $(pre+'-btn').style.display=which==='cancel'?'none':'';
+      $(pre+'-cancel').style.display=which==='cancel'?'':'none';
+      $(pre+'-retry').style.display=which==='retry'?'':'none';
+    }
+    function cancelScan(pre){var c=CTRL[pre];if(c){c.abort();}$(pre+'-btn').disabled=false;endProg(pre);showCtl(pre,'run');$(pre+'-status').textContent='Scan cancelled.';}
+    function retryScan(pre){var l=LAST[pre];if(l){stream(l.endpoint,l.body,pre,l.onDone);}}
     function stream(endpoint,body,pre,onDone){
       if('Notification' in window&&Notification.permission==='default'){try{Notification.requestPermission();}catch(e){}} // ask on the Run gesture, so the first finished scan can already toast
-      var btn=$(pre+'-btn');btn.disabled=true;$(pre+'-frame').innerHTML='';$(pre+'-link').innerHTML='';setProg(pre,3,'starting');
-      fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(function(r){
+      LAST[pre]={endpoint:endpoint,body:body,onDone:onDone};
+      var ctrl=new AbortController();CTRL[pre]=ctrl;
+      var btn=$(pre+'-btn');btn.disabled=true;showCtl(pre,'cancel');$(pre+'-frame').innerHTML='';$(pre+'-link').innerHTML='';setProg(pre,3,'starting');
+      fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:ctrl.signal}).then(function(r){
         var reader=r.body.getReader(),dec=new TextDecoder(),buf='';
-        function pump(){return reader.read().then(function(res){if(res.done)return;buf+=dec.decode(res.value,{stream:true});var lines=buf.split('\\n');buf=lines.pop();lines.forEach(function(ln){if(ln.trim()){try{var m=JSON.parse(ln);if(m.t==='p'){setProg(pre,m.pct,m.phase);if(m.stage)mark(pre,m.stage);}else if(m.t==='done'){btn.disabled=false;endProg(pre);scanNotify(pre,m);onDone(m);}}catch(e){}}});return pump();});}
+        function pump(){return reader.read().then(function(res){if(res.done)return;buf+=dec.decode(res.value,{stream:true});var lines=buf.split('\\n');buf=lines.pop();lines.forEach(function(ln){if(ln.trim()){try{var m=JSON.parse(ln);if(m.t==='p'){setProg(pre,m.pct,m.phase);if(m.stage)mark(pre,m.stage);}else if(m.t==='done'){CTRL[pre]=null;btn.disabled=false;endProg(pre);showCtl(pre,m.ok===false?'retry':'run');scanNotify(pre,m);onDone(m);}}catch(e){}}});return pump();});}
         return pump();
-      }).catch(function(err){btn.disabled=false;endProg(pre);$(pre+'-status').innerHTML='Request error: '+err;});
+      }).catch(function(err){CTRL[pre]=null;btn.disabled=false;endProg(pre);if(err&&err.name==='AbortError'){showCtl(pre,'run');return;}showCtl(pre,'retry');$(pre+'-status').innerHTML='Request error: '+err;});
     }
     // Grow an embedded report iframe to its FULL content height so the whole page scrolls (no tiny
     // nested scrollbar). ResizeObserver tracks late layout (dashboard animations, lazy images) + a
@@ -344,7 +381,8 @@ function appPage() {
       stream('/api/certify',{source:src,target:tgt,sitemapOnly:$('c-sitemap').checked,visual:$('c-visual').checked,production:$('c-prod').checked,maxPages:+$('c-max').value||30},'c',function(m){
         if(!m.ok){$('c-status').textContent='Post-deployment check failed: '+(m.error||'unknown');return;}
         $('c-pipe').querySelectorAll('span').forEach(function(s){s.className='done'});
-        $('c-status').innerHTML='<b>'+m.verdict+'</b> — passed '+m.tally.passed+' · warnings '+m.tally.warning+' · failed '+m.tally.failed+' · manual '+m.tally.manual+' · approved '+m.tally.approved;
+        var subw=(m.subErrors&&m.subErrors.length)?' <span style="color:var(--warn)">· '+m.subErrors.length+' stage(s) skipped: '+m.subErrors.join('; ')+'</span>':'';
+        $('c-status').innerHTML='<b>'+m.verdict+'</b> — passed '+m.tally.passed+' · warnings '+m.tally.warning+' · failed '+m.tally.failed+' · manual '+m.tally.manual+' · approved '+m.tally.approved+subw;
         showReport('c','/certify/'+m.id,'certification report');});}
 
     // 4 Reports — history list (left) + preview (right), filterable
@@ -410,6 +448,32 @@ function appPage() {
     try{if(!localStorage.getItem(WK_KEY))setTimeout(openWalk,350);}catch(e){}
     document.addEventListener('keydown',function(e){if($('tour').classList.contains('on')){if(e.key==='Escape')tourEnd();else if(e.key==='ArrowRight')tourGo(1);else if(e.key==='ArrowLeft')tourGo(-1);}});
     addEventListener('resize',function(){if($('tour').classList.contains('on'))tourShow();});
+
+    // in-app updater control — active ONLY inside the Electron shell (preload injects window.sgenUpdate).
+    // In the plain browser / CLI build the bridge is absent, so the control stays hidden. check → (if an
+    // update exists) download → restart-to-install, driven by events forwarded from the main process.
+    (function(){
+      if(!window.sgenUpdate)return;
+      var box=$('upd'),btn=$('upd-btn'),st=$('upd-st'),mode='check';
+      box.style.display='';
+      function set(t){st.textContent=t;}
+      try{sgenUpdate.version().then(function(v){if(v&&mode==='check')set('v'+v);});}catch(e){}
+      window.updClick=function(){
+        if(mode==='install'){sgenUpdate.install();return;}
+        if(mode==='download'){btn.disabled=true;set('Downloading…');sgenUpdate.download();return;}
+        btn.disabled=true;set('Checking…');
+        sgenUpdate.check().then(function(r){btn.disabled=false;if(r&&r.state==='dev')set(r.message||'Installed build only');else if(r&&r.state==='error')set('Error: '+(r.message||''));});
+      };
+      sgenUpdate.onStatus(function(p){
+        if(!p)return;
+        if(p.state==='checking'){btn.disabled=true;set('Checking…');}
+        else if(p.state==='none'){btn.disabled=false;mode='check';btn.textContent='Check for updates';set('Up to date');}
+        else if(p.state==='available'){btn.disabled=false;mode='download';btn.textContent='Download update';set('v'+(p.version||'')+' available');}
+        else if(p.state==='downloading'){btn.disabled=true;set('Downloading… '+(p.percent||0)+'%');}
+        else if(p.state==='downloaded'){btn.disabled=false;mode='install';btn.textContent='Restart to update';set('v'+(p.version||'')+' ready');}
+        else if(p.state==='error'){btn.disabled=false;set('Update error');}
+      });
+    })();
   </script></body></html>`;
 }
 
@@ -521,15 +585,19 @@ async function apiRun(req, res) {
   const id = safe(host) + '-' + Date.now(), outDir = path.join(RUNS, id);
   res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
   const emit = (o) => { try { res.write(JSON.stringify(o) + '\n'); } catch (e) {} };
+  // cooperative cancel: when the client aborts the fetch the socket closes → the next engine
+  // progress() call throws → the engine unwinds at the next page/render boundary (no engine edits).
+  let aborted = false; const onClose = () => { aborted = true; }; req.on('close', onClose); res.on('close', onClose);
+  const progress = (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct, phase }); };
   try {
-    const data = await runAudit(url, { maxPages: opts.maxPages || 30, render: opts.render !== false, renderSample: Math.min(opts.maxPages || 30, 25), screensDir: path.join(outDir, 'screenshots'), log: () => {}, progress: (pct, phase) => emit({ t: 'p', pct, phase }) });
+    const data = await runAudit(url, { maxPages: opts.maxPages || 30, render: opts.render !== false, renderSample: Math.min(opts.maxPages || 30, 25), screensDir: path.join(outDir, 'screenshots'), log: () => {}, progress });
     emit({ t: 'p', pct: 99, phase: 'writing report' });
     renderReport(data, outDir); recordScan(data);
     let comparison = false, cmp = null;
     if (opts.save) saveBaseline(data, opts.save);
     if (opts.baseline) { try { const base = loadResult(opts.baseline); base.data._label = opts.baseline; data._label = 'current'; const d = diff(base.data, data); renderCompare(d, outDir); comparison = true; cmp = d.counts; } catch (e) {} }
     emit({ t: 'done', ok: true, id, verdict: data.verdict, score: data.score, tally: data.tally, comparison, cmp }); res.end();
-  } catch (e) { emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
+  } catch (e) { if (!aborted) emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
 }
 
 // 2 — Visual Comparison (frozen visual-match engine)
@@ -544,13 +612,14 @@ async function apiVisual(req, res) {
   const id = safe(H(ref)) + '-vis-' + Date.now(), outDir = path.join(RUNS, id);
   res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
   const emit = (o2) => { try { res.write(JSON.stringify(o2) + '\n'); } catch (e) {} };
+  let aborted = false; const onClose = () => { aborted = true; }; req.on('close', onClose); res.on('close', onClose);
   try {
     emit({ t: 'p', pct: 6, phase: 'discovering + rendering pages' });
-    const data = await visualMatch.run(ref, tgt, { maxPages, outDir, viewports: vps, axes: o.axes, log: () => {}, progress: (pct, phase) => emit({ t: 'p', pct: Math.max(6, Math.min(96, pct || 0)), phase: phase || 'comparing' }) });
+    const data = await visualMatch.run(ref, tgt, { maxPages, outDir, viewports: vps, axes: o.axes, log: () => {}, progress: (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct: Math.max(6, Math.min(96, pct || 0)), phase: phase || 'comparing' }); } });
     emit({ t: 'p', pct: 98, phase: 'writing report' });
     renderVisual(data, outDir);
     emit({ t: 'done', ok: true, id, overall: data.overall, pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp }); res.end();
-  } catch (e) { emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
+  } catch (e) { if (!aborted) emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
 }
 
 // 3 — Post-Deployment Check (frozen migration-certification pipeline; mirrors sgen-qa-certify.js orchestration)
@@ -564,16 +633,21 @@ async function apiCertify(req, res) {
   fs.mkdirSync(outDir, { recursive: true });
   res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
   const emit = (o2) => { try { res.write(JSON.stringify(o2) + '\n'); } catch (e) {} };
+  let aborted = false; const onClose = () => { aborted = true; }; req.on('close', onClose); res.on('close', onClose);
+  const step = (o2) => { if (aborted) throw new Error('client-cancelled'); emit(o2); };
+  const subErrors = [];
   try {
-    emit({ t: 'p', pct: 8, phase: 'inventory — crawling source', stage: 'inventory' });
+    step({ t: 'p', pct: 8, phase: 'inventory — crawling source', stage: 'inventory' });
     const refCrawl = await discoverPages(source, { maxPages, sitemapOnly, log: () => {} });
-    emit({ t: 'p', pct: 22, phase: 'inventory — crawling target', stage: 'inventory' });
+    step({ t: 'p', pct: 22, phase: 'inventory — crawling target', stage: 'inventory' });
     const tgtCrawl = await discoverPages(target, { maxPages, sitemapOnly, log: () => {} });
     const at = new Date().toISOString();
     let auditResult = null, visualResult = null;
-    if (o.production !== false) { emit({ t: 'p', pct: 42, phase: 'production validation — auditing target', stage: 'production' }); try { auditResult = await runAudit(target, { maxPages, render: true, screensDir: path.join(outDir, 'shots'), log: () => {} }); } catch (e) {} }
-    if (o.visual) { emit({ t: 'p', pct: 62, phase: 'visual comparison — device breakpoints', stage: 'visual' }); try { visualResult = await visualMatch.run(source, target, { maxPages, outDir: path.join(outDir, 'visual'), log: () => {} }); } catch (e) {} }
-    emit({ t: 'p', pct: 82, phase: 'certifying', stage: 'certification' });
+    // sub-stages are optional but their FAILURE must be surfaced — not silently swallowed (a failed
+    // sub-step used to look like a clean pass). Capture the error and report it in the done frame.
+    if (o.production !== false) { step({ t: 'p', pct: 42, phase: 'production validation — auditing target', stage: 'production' }); try { auditResult = await runAudit(target, { maxPages, render: true, screensDir: path.join(outDir, 'shots'), log: () => {} }); } catch (e) { if (aborted) throw e; subErrors.push('production audit: ' + String(e && e.message || e)); emit({ t: 'p', pct: 44, phase: 'production validation skipped (failed)', stage: 'production' }); } }
+    if (o.visual) { step({ t: 'p', pct: 62, phase: 'visual comparison — device breakpoints', stage: 'visual' }); try { visualResult = await visualMatch.run(source, target, { maxPages, outDir: path.join(outDir, 'visual'), log: () => {} }); } catch (e) { if (aborted) throw e; subErrors.push('visual comparison: ' + String(e && e.message || e)); emit({ t: 'p', pct: 64, phase: 'visual comparison skipped (failed)', stage: 'visual' }); } }
+    step({ t: 'p', pct: 82, phase: 'certifying', stage: 'certification' });
     const idRegistry = new IdRegistry(path.join(DATA, 'inventory-ids.jsonl'));
     const r = certifyMigration(refCrawl.pages, tgtCrawl.pages, {
       idRegistry, source: H(source), target: H(target), sourceHost: H(source), targetHost: H(target),
@@ -583,8 +657,8 @@ async function apiCertify(req, res) {
     emit({ t: 'p', pct: 96, phase: 'writing report' });
     fs.writeFileSync(path.join(outDir, 'report.html'), r.report.html);
     fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify(r.report.json, null, 2));
-    emit({ t: 'done', ok: true, id, verdict: r.cert.verdict, tally: r.cert.tally }); res.end();
-  } catch (e) { emit({ t: 'done', ok: false, error: String(e && e.stack || e) }); res.end(); }
+    emit({ t: 'done', ok: true, id, verdict: r.cert.verdict, tally: r.cert.tally, subErrors: subErrors.length ? subErrors : undefined }); res.end();
+  } catch (e) { if (!aborted) emit({ t: 'done', ok: false, error: String(e && e.stack || e) }); res.end(); }
 }
 
 server.requestTimeout = 0; server.headersTimeout = 0;
