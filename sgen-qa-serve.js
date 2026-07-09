@@ -271,11 +271,29 @@ function appPage() {
     function checked(cid){return [].slice.call(document.querySelectorAll('#'+cid+' input:checked')).map(function(i){return i.value});}
     function setProg(pre,pct,phase){$(pre+'-pbar').classList.add('on');pct=Math.max(2,Math.min(100,pct||0));$(pre+'-pfill').style.width=pct+'%';if(phase)$(pre+'-status').innerHTML='<span class="spin"></span>'+phase+' — '+pct+'%';}
     function endProg(pre){setProg(pre,100,'');setTimeout(function(){$(pre+'-pbar').classList.remove('on')},400);}
+    // desktop notification when a scan finishes — fires as a native OS toast when the tab is in the
+    // background or the window unfocused (multitasking), plus a soft chime + title flash either way.
+    var TOOL_NAME={a:'Site Audit',v:'Visual Comparison',c:'Migration Certification'};
+    var baseTitle=document.title;
+    function chime(){try{var ctx=new (window.AudioContext||window.webkitAudioContext)();var o=ctx.createOscillator(),g=ctx.createGain();o.connect(g);g.connect(ctx.destination);o.frequency.value=880;g.gain.setValueAtTime(0.0001,ctx.currentTime);g.gain.exponentialRampToValueAtTime(0.06,ctx.currentTime+0.02);g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.5);o.start();o.stop(ctx.currentTime+0.55);}catch(e){}}
+    function flashTitle(msg){var n=0,iv=setInterval(function(){document.title=(n%2?baseTitle:msg);if(++n>9||!document.hidden){clearInterval(iv);document.title=baseTitle;}},900);}
+    function scanNotify(pre,m){
+      var tool=TOOL_NAME[pre]||'Scan';
+      var body=m.ok===false?('Failed: '+String(m.error||'unknown error').slice(0,120))
+        :(m.verdict?tool+': '+m.verdict+(m.score!=null?' \\u00b7 '+m.score+'%':'')+(m.tally?' \\u00b7 '+(m.tally.fail||0)+' failed / '+(m.tally.warn||0)+' warnings':'')
+        :(m.overall!=null?tool+': '+m.overall+'% match \\u00b7 '+(m.pairs||0)+' page(s)':tool+' finished'));
+      chime();flashTitle('\\u2713 '+tool+' done');
+      if(!('Notification' in window))return;
+      if((document.hidden||!document.hasFocus())&&Notification.permission==='granted'){
+        try{var nt=new Notification('SGEN Migration QA \\u2014 '+tool+' finished',{body:body,tag:'sgenqa-'+pre,requireInteraction:false});nt.onclick=function(){try{window.focus();}catch(e){}nt.close();};}catch(e){}
+      }
+    }
     function stream(endpoint,body,pre,onDone){
+      if('Notification' in window&&Notification.permission==='default'){try{Notification.requestPermission();}catch(e){}} // ask on the Run gesture, so the first finished scan can already toast
       var btn=$(pre+'-btn');btn.disabled=true;$(pre+'-frame').innerHTML='';$(pre+'-link').innerHTML='';setProg(pre,3,'starting');
       fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(function(r){
         var reader=r.body.getReader(),dec=new TextDecoder(),buf='';
-        function pump(){return reader.read().then(function(res){if(res.done)return;buf+=dec.decode(res.value,{stream:true});var lines=buf.split('\\n');buf=lines.pop();lines.forEach(function(ln){if(ln.trim()){try{var m=JSON.parse(ln);if(m.t==='p'){setProg(pre,m.pct,m.phase);if(m.stage)mark(pre,m.stage);}else if(m.t==='done'){btn.disabled=false;endProg(pre);onDone(m);}}catch(e){}}});return pump();});}
+        function pump(){return reader.read().then(function(res){if(res.done)return;buf+=dec.decode(res.value,{stream:true});var lines=buf.split('\\n');buf=lines.pop();lines.forEach(function(ln){if(ln.trim()){try{var m=JSON.parse(ln);if(m.t==='p'){setProg(pre,m.pct,m.phase);if(m.stage)mark(pre,m.stage);}else if(m.t==='done'){btn.disabled=false;endProg(pre);scanNotify(pre,m);onDone(m);}}catch(e){}}});return pump();});}
         return pump();
       }).catch(function(err){btn.disabled=false;endProg(pre);$(pre+'-status').innerHTML='Request error: '+err;});
     }
