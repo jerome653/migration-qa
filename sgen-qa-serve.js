@@ -57,6 +57,8 @@ function appPage() {
   @media(max-width:440px){ .top .brand{font-size:0;gap:0} .help-btn{display:none} .top nav button b{font-size:11px} }
   .top .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;font-size:15px}
   .top .brand .mk{width:28px;height:28px;border-radius:8px;background:var(--brand-solid);display:grid;place-items:center}
+  .top .brand .bt{display:flex;flex-direction:column;line-height:1.12}
+  .top .brand .bv{font-size:10px;font-weight:500;color:var(--ink-faint);letter-spacing:.02em}
   /* nav ALWAYS one row — never wraps internally; buttons shrink and the right-side cluster
      (help/update/env) yields first. .top wraps so those items drop below, never a tool. */
   .top nav{display:flex;gap:8px;margin-left:12px;flex-wrap:nowrap;flex:1 1 auto;min-width:0}
@@ -166,7 +168,7 @@ function appPage() {
   .ritem{cursor:pointer}.ritem.sel{border-color:var(--brand);background:var(--surface)}
   </style></head><body>
   <div class="top">
-    <div class="brand"><span class="mk"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>SGEN Site QA</div>
+    <div class="brand"><span class="mk"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="bt">SGEN Site QA<span class="bv" id="brand-ver"></span></span></div>
     <nav>
       <button data-t="audit" class="on" onclick="tab('audit')"><b>1 · Site Audit</b><span class="nd">quality-check one site</span></button>
       <button data-t="visual" onclick="tab('visual')"><b>2 · Visual Comparison</b><span class="nd">old vs new, side by side</span></button>
@@ -210,8 +212,8 @@ function appPage() {
             <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
               <select id="v-scope" style="flex:1;min-width:0;max-width:340px"><option value="single">Single page (homepage)</option><option value="multiple">Multiple pages (up to max)</option><option value="sitemap">Sitemap-driven</option><option value="full">Full site</option></select>
               <label style="font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:6px;flex:none">max pages <input id="v-max" type="number" value="8" min="1" max="200"></label></div></div>
-          <div class="grp"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>Industry-standard device widths. The 360–430 phone band is where most real-world breakage lives.<em>desktop · laptop · iPad landscape/portrait · iPhone · Android</em></span></span></div><div class="chips" id="v-vps">
-            <label class="chip"><input type="checkbox" value="1920" checked>1920 · Desktop</label><label class="chip"><input type="checkbox" value="1440" checked>1440 · Laptop</label><label class="chip"><input type="checkbox" value="1024" checked>1024 · iPad&nbsp;LS</label><label class="chip"><input type="checkbox" value="768" checked>768 · iPad</label><label class="chip"><input type="checkbox" value="390" checked>390 · iPhone</label><label class="chip"><input type="checkbox" value="360" checked>360 · Android</label></div></div>
+          <div class="grp"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>Industry-standard device widths. The 360–480 phone band is where most real-world breakage lives.<em>desktop · laptop · iPad landscape/portrait · iPhone Pro Max · iPhone · Android · Galaxy S</em></span></span></div><div class="chips" id="v-vps">
+            <label class="chip"><input type="checkbox" value="1920" checked>1920 · Desktop</label><label class="chip"><input type="checkbox" value="1440" checked>1440 · Laptop</label><label class="chip"><input type="checkbox" value="1200" checked>1200 · Laptop&nbsp;sm</label><label class="chip"><input type="checkbox" value="1024" checked>1024 · iPad&nbsp;LS</label><label class="chip"><input type="checkbox" value="768" checked>768 · iPad</label><label class="chip"><input type="checkbox" value="480" checked>480 · Mobile&nbsp;lg</label><label class="chip"><input type="checkbox" value="430" checked>430 · iPhone&nbsp;Max</label><label class="chip"><input type="checkbox" value="390" checked>390 · iPhone</label><label class="chip"><input type="checkbox" value="380" checked>380 · Android</label><label class="chip"><input type="checkbox" value="360" checked>360 · Galaxy&nbsp;S</label></div></div>
           <div class="grp"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>Every comparison runs the full check — there is nothing to toggle.<em>Pixel match + structural diff at each viewport.</em></span></span></div>
             <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:10px 13px">
               Each paired page is compared at every selected viewport on two axes:
@@ -292,7 +294,7 @@ function appPage() {
   </div>
 
   <script>
-    var VPMAP={1920:'1920 · desktop',1440:'1440 · laptop',1024:'1024 · tablet-landscape',768:'768 · tablet',390:'390 · mobile',360:'360 · mobile-small'};
+    var VPMAP={1920:'1920 · desktop',1440:'1440 · laptop',1200:'1200 · laptop-sm',1024:'1024 · iPad landscape',768:'768 · iPad portrait',480:'480 · mobile-lg',430:'430 · iPhone Pro Max',390:'390 · iPhone',380:'380 · Android',360:'360 · Galaxy S'};
     function tab(t){document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('on')});document.getElementById('p-'+t).classList.add('on');document.querySelectorAll('.top nav button').forEach(function(b){b.classList.toggle('on',b.dataset.t===t)});}
     function $(id){return document.getElementById(id);}
     function checked(cid){return [].slice.call(document.querySelectorAll('#'+cid+' input:checked')).map(function(i){return i.value});}
@@ -415,7 +417,7 @@ function appPage() {
       {tab:'audit',target:'#a-url',lbl:'Tool 1 · Site Audit',title:'Enter any site URL',body:'Point it at a live site. It crawls the pages and checks links, forms, responsive, accessibility, SEO, performance, security, and interaction — 128 rules, deterministic, no AI.'},
       {tab:'audit',target:'#a-btn',lbl:'Tool 1 · Site Audit',title:'Run the audit',body:'Results appear below with a quality score, a launch-readiness verdict, and per-issue "Copy for dev" tickets carrying a stable Playwright/Cypress locator. Screenshots are filterable by page + viewport.'},
       {tab:'visual',target:'#v-ref',lbl:'Tool 2 · Visual Comparison',title:'Old vs new, side by side',body:'Give a reference URL and a target URL. Every paired page is compared at each viewport on two axes: pixel match and structural diff (missing / extra / moved / restyled elements).'},
-      {tab:'visual',target:'#v-vps',lbl:'Tool 2 · Viewports',title:'Real device widths',body:'Industry-standard breakpoints — desktop, laptop, iPad, iPhone, Android. The 360–430 phone band is where most real-world breakage hides.'},
+      {tab:'visual',target:'#v-vps',lbl:'Tool 2 · Viewports',title:'Real device widths',body:'Industry-standard breakpoints — desktop, laptop, iPad, iPhone Pro Max, iPhone, Android, Galaxy S. The 360–480 phone band is where most real-world breakage hides.'},
       {tab:'cert',target:'#c-src',lbl:'Tool 3 · Post-Deployment Check',title:'Did everything make it across?',body:'After a migration, this inventories every page, section, image, menu and form on the source and verifies each exists intact on the new build — with a PASS / MINOR / FAIL verdict.'},
       {tab:'reports',target:'[data-t=reports]',lbl:'Tool 4 · Reports',title:'Every run, kept',body:'Preview any past run, open its HTML, or save it as a PDF to hand off. Runs stay on this machine.'},
       {tab:'audit',target:'.help-btn',lbl:'Done',title:"That's the tour",body:"Reopen it anytime from ? Help. Enter a URL and run your first audit whenever you're ready."}
@@ -443,9 +445,16 @@ function appPage() {
     }
     function tourGo(dir){ if(dir>0&&TW===TOUR.length-1){tourEnd();return;} TW=Math.max(0,Math.min(TOUR.length-1,TW+dir)); tourShow(); }
     function openWalk(){ TW=0; $('tour').classList.add('on'); tourShow(); }
-    function tourEnd(){ $('tour').classList.remove('on'); $('tour-hi').classList.remove('show'); try{localStorage.setItem(WK_KEY,'1');}catch(e){} }
+    // "tour seen" persists via the Electron shell (window.sgenApp) when present - the app runs on a fresh
+    // random port each launch so page localStorage never carries over; browser build falls back to localStorage.
+    function markTourSeen(){ try{localStorage.setItem(WK_KEY,'1');}catch(e){} if(window.sgenApp&&sgenApp.setFlag){try{sgenApp.setFlag(WK_KEY,'1');}catch(e){}} }
+    function tourSeen(cb){
+      if(window.sgenApp&&sgenApp.getFlag){ sgenApp.getFlag(WK_KEY).then(function(v){cb(!!v);}).catch(function(){try{cb(!!localStorage.getItem(WK_KEY));}catch(e){cb(false);}}); }
+      else { try{cb(!!localStorage.getItem(WK_KEY));}catch(e){cb(false);} }
+    }
+    function tourEnd(){ $('tour').classList.remove('on'); $('tour-hi').classList.remove('show'); markTourSeen(); }
     var closeWalk=tourEnd; // ? Help + Esc compatibility
-    try{if(!localStorage.getItem(WK_KEY))setTimeout(openWalk,350);}catch(e){}
+    tourSeen(function(seen){ if(!seen){ markTourSeen(); setTimeout(openWalk,350); } }); // mark on first auto-open so it never re-shows, even if closed mid-tour (? Help still reopens)
     document.addEventListener('keydown',function(e){if($('tour').classList.contains('on')){if(e.key==='Escape')tourEnd();else if(e.key==='ArrowRight')tourGo(1);else if(e.key==='ArrowLeft')tourGo(-1);}});
     addEventListener('resize',function(){if($('tour').classList.contains('on'))tourShow();});
 
@@ -457,7 +466,7 @@ function appPage() {
       var box=$('upd'),btn=$('upd-btn'),st=$('upd-st'),mode='check';
       box.style.display='';
       function set(t){st.textContent=t;}
-      try{sgenUpdate.version().then(function(v){if(v&&mode==='check')set('v'+v);});}catch(e){}
+      try{sgenUpdate.version().then(function(v){if(v){var bv=$('brand-ver');if(bv)bv.textContent='v'+v;if(mode==='check')set('v'+v);}});}catch(e){}
       window.updClick=function(){
         if(mode==='install'){sgenUpdate.install();return;}
         if(mode==='download'){btn.disabled=true;set('Downloading…');sgenUpdate.download();return;}
