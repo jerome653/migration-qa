@@ -39,36 +39,31 @@ const gitCommit = (() => { try { return require('child_process').execSync('git r
 function appPage() {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SGEN Site QA</title><style>${STYLE}
   :root{--nav-h:56px}
-  .top{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px 12px;padding:8px 20px;min-height:var(--nav-h);flex-wrap:wrap}
-  /* keep the 4 tool tabs + brand on ONE row at every app width — collapse the OTHER side first,
-     in priority order: env (widest, least useful) → help → update, then compact the tabs. */
-  @media(max-width:1024px){ .top .env{display:none} .top nav button .nd{display:none} .top nav button{padding:8px 12px} }
-  @media(max-width:900px){ .help-btn{display:none} }
-  @media(max-width:760px){
-    .top{gap:8px 8px;flex-wrap:nowrap}
-    .top .brand{flex:0 0 auto;font-size:13px}.top .brand .mk{width:24px;height:24px}
-    .top nav{margin-left:8px;flex:1 1 auto;flex-wrap:nowrap;min-width:0;gap:6px}
-    .top nav button{flex:1 1 0;min-width:0;padding:8px 8px;text-align:center;align-items:center}
-    .top nav button b{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-    .top nav button .nd{display:none}
-    .top .env{display:none}.top .upd{display:none!important}
-    .help-btn{padding:6px 9px;flex:0 0 auto}
-  }
-  @media(max-width:440px){ .top .brand{font-size:0;gap:0} .help-btn{display:none} .top nav button b{font-size:11px} }
-  .top .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;font-size:15px}
-  .top .brand .mk{width:28px;height:28px;border-radius:8px;background:var(--brand-solid);display:grid;place-items:center}
+  /* header row: brand (left) + utility actions (right). Tool tabs live in their OWN full-width bar below. */
+  .topbar{position:sticky;top:0;z-index:20;background:var(--surface)}
+  .top{display:flex;align-items:center;gap:12px;padding:11px 20px;min-height:var(--nav-h);border-bottom:1px solid var(--line)}
+  .top .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em;font-size:15px;flex:none}
+  .top .brand .mk{width:28px;height:28px;border-radius:8px;background:var(--brand-solid);display:grid;place-items:center;flex:none}
   .top .brand .bt{display:flex;flex-direction:column;line-height:1.12}
-  .top .brand .bv{font-size:10px;font-weight:500;color:var(--ink-faint);letter-spacing:.02em}
-  /* nav ALWAYS one row — never wraps internally; buttons shrink and the right-side cluster
-     (help/update/env) yields first. .top wraps so those items drop below, never a tool. */
-  .top nav{display:flex;gap:8px;margin-left:12px;flex-wrap:nowrap;flex:1 1 auto;min-width:0}
-  .top nav button{background:var(--surface-2);border:1px solid var(--line);color:var(--ink-soft);font-size:14px;font-weight:650;padding:9px 16px;border-radius:11px;cursor:pointer;font-family:inherit;text-align:left;display:flex;flex-direction:column;gap:1px;flex:0 1 auto;min-width:0;transition:border-color .12s ease,transform .12s ease}
-  .top nav button b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-  .top nav button .nd{font-size:10.5px;font-weight:450;color:var(--ink-faint);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-  .top nav button:hover{border-color:var(--brand);color:var(--ink);transform:translateY(-1px)}
-  .top nav button.on{background:var(--brand-solid);border-color:var(--brand-solid);color:#fff}
-  .top nav button.on .nd{color:rgba(255,255,255,.75)}
-  .top .env{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
+  .top .brand .bv{font-size:10px;font-weight:500;color:var(--ink-faint);letter-spacing:.02em;font-family:var(--mono)}
+  .hdr-actions{display:flex;align-items:center;gap:8px;margin-left:auto;min-width:0}
+  .top .env{font-family:var(--mono);font-size:11px;color:var(--ink-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* full-width tool tab bar — four equal quarters; active carries a red underline + surface lift */
+  .tabbar{display:flex;background:var(--surface);border-bottom:1px solid var(--line-strong)}
+  .tabbar button{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:2px;padding:12px 18px;cursor:pointer;background:transparent;border:0;border-right:1px solid var(--line);border-bottom:2px solid transparent;color:var(--ink-soft);font-family:inherit;text-align:left;transition:background .12s ease,border-color .12s ease,color .12s ease}
+  .tabbar button:last-child{border-right:0}
+  .tabbar button b{font-size:14px;font-weight:650;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .tabbar button .nd{font-size:11px;font-weight:450;color:var(--ink-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .tabbar button:hover{background:var(--surface-2)}
+  .tabbar button:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+  .tabbar button.on{background:var(--surface-2);border-bottom-color:var(--brand-solid)}
+  .tabbar button.on b{color:#fff}
+  .tabbar button.on .nd{color:var(--ink-soft)}
+  /* responsive: drop help/env first, then thin the tabs, then wrap to 2x2, then stack */
+  @media(max-width:900px){ .help-btn{display:none} }
+  @media(max-width:760px){ .top .env{display:none} .tabbar button .nd{display:none} .tabbar button{padding:11px 12px;text-align:center;align-items:center} .tabbar button b{font-size:13px} }
+  @media(max-width:560px){ .tabbar{flex-wrap:wrap} .tabbar button{flex:1 1 45%;border-bottom:1px solid var(--line)} .tabbar button.on{border-bottom:2px solid var(--brand-solid)} }
+  @media(max-width:440px){ .top .brand .bv{display:none} }
   html,body{max-width:100%;overflow-x:hidden}
   .wrap{width:100%;max-width:none;margin:0;padding:26px clamp(22px,4vw,56px) 60px;box-sizing:border-box}
   .panel{display:none}.panel.on{display:block}
@@ -96,6 +91,9 @@ function appPage() {
   .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
   .chip{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer;user-select:none}
   .chip input{accent-color:var(--brand-solid)}
+  /* viewport chips: even grid so 10 device widths line up in tidy columns instead of a ragged wrap */
+  #v-vps{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+  #v-vps .chip{white-space:nowrap}
   .grp{margin-top:14px}.grp .glab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-faint);font-weight:700;margin-bottom:7px}
   .opts{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;align-items:center;font-size:13px;color:var(--ink-soft)}
   .opts label{display:flex;align-items:center;gap:6px}
@@ -167,18 +165,22 @@ function appPage() {
   .rfilters button.on{background:var(--brand-solid);color:#fff;border-color:var(--brand-solid)}
   .ritem{cursor:pointer}.ritem.sel{border-color:var(--brand);background:var(--surface)}
   </style></head><body>
-  <div class="top">
-    <div class="brand"><span class="mk"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="bt">SGEN Site QA<span class="bv" id="brand-ver"></span></span></div>
-    <nav>
+  <header class="topbar">
+    <div class="top">
+      <div class="brand"><span class="mk"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="bt">SGEN Site QA<span class="bv" id="brand-ver"></span></span></div>
+      <div class="hdr-actions">
+        <div class="env">127.0.0.1:${PORT} · ${gitCommit} · real</div>
+        <div class="upd" id="upd" style="display:none"><button class="upd-btn" id="upd-btn" onclick="updClick()">Check for updates</button><span class="upd-st" id="upd-st"></span></div>
+        <button class="help-btn" onclick="openWalk()" title="Reopen the walkthrough">? Help</button>
+      </div>
+    </div>
+    <nav class="tabbar" role="tablist" aria-label="Tools">
       <button data-t="audit" class="on" onclick="tab('audit')"><b>1 · Site Audit</b><span class="nd">quality-check one site</span></button>
       <button data-t="visual" onclick="tab('visual')"><b>2 · Visual Comparison</b><span class="nd">old vs new, side by side</span></button>
       <button data-t="cert" onclick="tab('cert')"><b>3 · Post-Deployment Check</b><span class="nd">did everything make it across?</span></button>
       <button data-t="reports" onclick="tab('reports');loadReports()"><b>4 · Reports</b><span class="nd">past runs · HTML · PDF</span></button>
     </nav>
-    <button class="help-btn" onclick="openWalk()" title="Reopen the walkthrough">? Help</button>
-    <div class="upd" id="upd" style="display:none"><button class="upd-btn" id="upd-btn" onclick="updClick()">Check for updates</button><span class="upd-st" id="upd-st"></span></div>
-    <div class="env">127.0.0.1:${PORT} · ${gitCommit} · real</div>
-  </div>
+  </header>
   <div class="wrap">
 
     <!-- 1 SITE AUDIT -->
@@ -295,7 +297,7 @@ function appPage() {
 
   <script>
     var VPMAP={1920:'1920 · desktop',1440:'1440 · laptop',1200:'1200 · laptop-sm',1024:'1024 · iPad landscape',768:'768 · iPad portrait',480:'480 · mobile-lg',430:'430 · iPhone Pro Max',390:'390 · iPhone',380:'380 · Android',360:'360 · Galaxy S'};
-    function tab(t){document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('on')});document.getElementById('p-'+t).classList.add('on');document.querySelectorAll('.top nav button').forEach(function(b){b.classList.toggle('on',b.dataset.t===t)});}
+    function tab(t){document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('on')});document.getElementById('p-'+t).classList.add('on');document.querySelectorAll('.tabbar button').forEach(function(b){b.classList.toggle('on',b.dataset.t===t)});}
     function $(id){return document.getElementById(id);}
     function checked(cid){return [].slice.call(document.querySelectorAll('#'+cid+' input:checked')).map(function(i){return i.value});}
     function setProg(pre,pct,phase){$(pre+'-pbar').classList.add('on');pct=Math.max(2,Math.min(100,pct||0));$(pre+'-pfill').style.width=pct+'%';if(phase)$(pre+'-status').innerHTML='<span class="spin"></span>'+phase+' — '+pct+'%';}
@@ -413,7 +415,7 @@ function appPage() {
     var WK_KEY='sgenqa_onboarded_v2';
     var TOUR=[
       {tab:'audit',target:null,lbl:'Welcome',title:'SGEN Site QA',body:"Four offline tools to check any website's quality — audit, compare, verify a migration, and review reports. Nothing leaves this machine. Let me show you around."},
-      {tab:'audit',target:'.top nav',lbl:'Navigation',title:'Four tools, one app',body:'Switch tools here. Site Audit checks one site · Visual Comparison diffs old vs new · Post-Deployment Check verifies a migration · Reports holds past runs.'},
+      {tab:'audit',target:'.tabbar',lbl:'Navigation',title:'Four tools, one app',body:'Switch tools here. Site Audit checks one site · Visual Comparison diffs old vs new · Post-Deployment Check verifies a migration · Reports holds past runs.'},
       {tab:'audit',target:'#a-url',lbl:'Tool 1 · Site Audit',title:'Enter any site URL',body:'Point it at a live site. It crawls the pages and checks links, forms, responsive, accessibility, SEO, performance, security, and interaction — 128 rules, deterministic, no AI.'},
       {tab:'audit',target:'#a-btn',lbl:'Tool 1 · Site Audit',title:'Run the audit',body:'Results appear below with a quality score, a launch-readiness verdict, and per-issue "Copy for dev" tickets carrying a stable Playwright/Cypress locator. Screenshots are filterable by page + viewport.'},
       {tab:'visual',target:'#v-ref',lbl:'Tool 2 · Visual Comparison',title:'Old vs new, side by side',body:'Give a reference URL and a target URL. Every paired page is compared at each viewport on two axes: pixel match and structural diff (missing / extra / moved / restyled elements).'},
@@ -560,6 +562,10 @@ function listRuns() {
 }
 
 // ---- server -------------------------------------------------------------------------------------
+// active-scan tracking so the desktop shell can defer a silent auto-update/refresh until no scan is
+// running (never restart mid-audit). Incremented per streaming scan; decremented when its response ends.
+let ACTIVE_SCANS = 0;
+function trackScan(res) { ACTIVE_SCANS++; let done = false; const end = () => { if (done) return; done = true; ACTIVE_SCANS = Math.max(0, ACTIVE_SCANS - 1); }; res.on('close', end); res.on('finish', end); return end; }
 const server = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
@@ -567,6 +573,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/') return send(res, 200, 'text/html; charset=utf-8', appPage());
     if (req.method === 'GET' && p === '/api/baselines') return send(res, 200, 'application/json', JSON.stringify({ baselines: listBaselines() }));
     if (req.method === 'GET' && p === '/api/reports') { let cases = []; try { cases = loadCases(path.join(DATA, 'portfolio.jsonl')); } catch (_) {} return send(res, 200, 'application/json', JSON.stringify({ runs: listRuns(), cases })); }
+    if (req.method === 'GET' && p === '/api/status') return send(res, 200, 'application/json', JSON.stringify({ busy: ACTIVE_SCANS > 0, active: ACTIVE_SCANS }));
 
     for (const [prefix, file] of [['report', 'report.html'], ['compare', 'comparison.html'], ['visual', 'visual-match.html'], ['certify', 'report.html']]) {
       if (req.method === 'GET' && p.startsWith('/' + prefix + '/')) {
@@ -593,6 +600,7 @@ async function apiRun(req, res) {
   let host; try { host = new URL(url).host; } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'invalid URL' })); }
   const id = safe(host) + '-' + Date.now(), outDir = path.join(RUNS, id);
   res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
+  trackScan(res);
   const emit = (o) => { try { res.write(JSON.stringify(o) + '\n'); } catch (e) {} };
   // cooperative cancel: when the client aborts the fetch the socket closes → the next engine
   // progress() call throws → the engine unwinds at the next page/render boundary (no engine edits).
@@ -620,6 +628,7 @@ async function apiVisual(req, res) {
   const vps = Array.isArray(o.viewports) && o.viewports.length ? visualMatch.VIEWPORTS.filter(v => o.viewports.includes(v.label)) : null;
   const id = safe(H(ref)) + '-vis-' + Date.now(), outDir = path.join(RUNS, id);
   res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
+  trackScan(res);
   const emit = (o2) => { try { res.write(JSON.stringify(o2) + '\n'); } catch (e) {} };
   let aborted = false; const onClose = () => { aborted = true; }; req.on('close', onClose); res.on('close', onClose);
   try {
@@ -641,6 +650,7 @@ async function apiCertify(req, res) {
   const id = safe(H(source)) + '-cert-' + Date.now(), outDir = path.join(RUNS, id);
   fs.mkdirSync(outDir, { recursive: true });
   res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
+  trackScan(res);
   const emit = (o2) => { try { res.write(JSON.stringify(o2) + '\n'); } catch (e) {} };
   let aborted = false; const onClose = () => { aborted = true; }; req.on('close', onClose); res.on('close', onClose);
   const step = (o2) => { if (aborted) throw new Error('client-cancelled'); emit(o2); };
