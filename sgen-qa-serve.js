@@ -410,8 +410,9 @@ function appPage() {
   .cfg-split>.fld,.cfg-split>.cs-cfg,.cfg-split>.cs-col{flex:1 1 300px;min-width:0}
   .cfg-split .glab{margin-bottom:9px}
   .cs-col>.grp:first-child{margin-top:0}
-  /* Site Audit: URL ~35%, scan config fills the rest on one row */
-  .cfg-au>.fld{flex:0 1 35%;min-width:200px}
+  /* Site Audit: the per-run inputs share the row. The Scan Configuration block that used to sit
+     beside them is settings-owned and hidden now (see .settings-owned), so they grow to fill. */
+  .cfg-au>.fld{flex:1 1 35%;min-width:200px}
   .cfg-au>.cs-cfg{flex:1 1 60%;min-width:0}
   .cfg-au .cfg-grid{flex-wrap:nowrap;align-items:center}
   @media(max-width:900px){.cfg-au>.fld,.cfg-au>.cs-cfg{flex:1 1 100%}.cfg-au .cfg-grid{flex-wrap:wrap}}
@@ -427,6 +428,20 @@ function appPage() {
   .cfg-action{display:flex;justify-content:flex-end;margin-top:18px}
   @media(max-width:820px){ .cfg-c,.cfg-g{flex:1 1 calc(50% - 24px)} }
   @media(max-width:520px){ .cfg-grid{gap:12px} .cfg-grid>label{flex:1 1 100%} .cfg-action{margin-top:14px} .cfg-action .run{width:100%} }
+  /* ---- controls the per-tool settings popup owns ---------------------------------------------
+     HIDDEN, NOT DELETED — deliberately. Read this before you "clean up" the markup below it.
+     Each control tagged .settings-owned is STILL the one source of truth the runner reads at run
+     time — runAudit() reads $('a-max') / $('a-render') / #a-vps, runVisual() reads $('v-mode') /
+     $('v-scope') / $('v-max') / $('v-warm') / #v-vps, runCert() reads $('c-sitemap') / $('c-visual')
+     / $('c-prod') / $('c-max') — and the settings popup is a second VIEW bound to these same nodes
+     (FIELDS[].bind + fGet/fSet, and FACTORY, which snapshots the authored DOM at parse time).
+     display:none changes none of that: .value, .checked and querySelectorAll all still work on a
+     hidden node. Delete these inputs and you break BOTH the scan AND the popup that edits them.
+     The dashboard therefore shows only the per-run inputs (the URLs, the save-as name) + the gear
+     + the run button; everything that is a SETTING is edited in the popup. */
+  .settings-owned{display:none}
+  /* the run button keeps its right edge once the info block beside it is settings-owned */
+  .vc-foot{justify-content:flex-end}
   /* help bubble */
   .help{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line-strong);color:var(--ink-soft);font-size:10px;font-weight:700;cursor:help;margin-left:6px;position:relative;font-family:var(--mono);vertical-align:middle}
   .help:hover,.help:focus{background:var(--brand-solid);color:#fff;border-color:var(--brand-solid);outline:none}
@@ -597,16 +612,23 @@ function appPage() {
       <div class="card">
         <div class="cfg-split cfg-au">
           <label class="fld" style="min-width:0">Site URL<input id="a-url" type="text" placeholder="e.g. sgen.com" spellcheck="false"></label>
-          <div class="cs-cfg">
+          <!-- "Save report as" is a per-RUN input, not a setting: it names the baseline this one scan is
+               stored as (apiRun calls saveBaseline only when opts.save is set). It has NO field in the settings
+               popup — see the per-run persistence note at the bottom of this script, which keeps it in
+               the same class as the URLs on purpose — so hiding it would not move it, it would delete
+               the "save the live site, then compare staging to it" flow outright, while localStorage
+               kept silently re-applying the last name typed. It stays on the dashboard beside the URL.
+               If it ever should go: add .settings-owned here, but give it a home first. -->
+          <label class="fld" style="min-width:0"><span>Save report as <span class="help" tabindex="0">?<span class="tip"><b>Save report as</b>Stores this scan as a reference for future comparisons.<em>Example: save the live site, then compare staging to it.</em></span></span></span><input id="a-save" type="text" placeholder="reference name" spellcheck="false"></label>
+          <div class="cs-cfg settings-owned">
             <div class="glab">Scan Configuration</div>
             <div class="cfg-grid">
               <label class="cfg-c">Max pages <input id="a-max" type="number" value="1" min="1" max="500"><span class="help" tabindex="0">?<span class="tip"><b>Max pages</b>How many pages to crawl and test. 1 = homepage only; higher follows the sitemap + internal links up to this cap.<em>Example: 1 for a quick single-page check.</em></span></span></label>
               <label class="cfg-c"><input id="a-render" type="checkbox" checked> Browser render <span class="help" tabindex="0">?<span class="tip"><b>Browser render</b>Loads each page in a real headless browser for axe-core accessibility, Core Web Vitals, full-page screenshots, and Firefox + WebKit. Off = faster static-only scan.</span></span></label>
-              <label class="cfg-g">Save report as <input id="a-save" type="text" placeholder="reference name" style="flex:1;min-width:120px"><span class="help" tabindex="0">?<span class="tip"><b>Save report as</b>Stores this scan as a reference for future comparisons.<em>Example: save the live site, then compare staging to it.</em></span></span></label>
             </div>
           </div>
         </div>
-        <div class="grp" style="margin-top:2px"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>What the browser-render responsive sweep tests. The 10 <b style="display:inline">devices</b> are really emulated — touch, pixel density, and the mobile UA on Android. The 3 <b style="display:inline">boundary probes</b> are width only: they test the layout on a framework breakpoint, not a device. Fewer = faster; all selected = the full matrix. AA colour-contrast still runs once even if 1920 is deselected.<em>Leave all selected to keep the standard 13-viewport sweep.</em></span></span></div><div class="chips" id="a-vps">
+        <div class="grp settings-owned" style="margin-top:2px"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>What the browser-render responsive sweep tests. The 10 <b style="display:inline">devices</b> are really emulated — touch, pixel density, and the mobile UA on Android. The 3 <b style="display:inline">boundary probes</b> are width only: they test the layout on a framework breakpoint, not a device. Fewer = faster; all selected = the full matrix. AA colour-contrast still runs once even if 1920 is deselected.<em>Leave all selected to keep the standard 13-viewport sweep.</em></span></span></div><div class="chips" id="a-vps">
           <label class="chip"><input type="checkbox" value="1920" checked>1920 · Desktop</label><label class="chip"><input type="checkbox" value="1440" checked>1440 · MacBook&nbsp;Air</label><label class="chip"><input type="checkbox" value="1180" checked>1180 · iPad&nbsp;Air&nbsp;LS</label><label class="chip"><input type="checkbox" value="820" checked>820 · iPad&nbsp;Air&nbsp;11</label><label class="chip"><input type="checkbox" value="744" checked>744 · iPad&nbsp;mini</label><label class="chip"><input type="checkbox" value="414" checked>414 · iPhone&nbsp;XR/11</label><label class="chip"><input type="checkbox" value="440" checked>440 · iPhone&nbsp;17&nbsp;Max</label><label class="chip"><input type="checkbox" value="393" checked>393 · iPhone&nbsp;16</label><label class="chip"><input type="checkbox" value="360" checked>360 · Galaxy&nbsp;S</label><label class="chip"><input type="checkbox" value="384" checked>384 · Galaxy&nbsp;S&nbsp;Ultra</label><div class="vpdiv">Breakpoint probes — width only, not devices</div><label class="chip"><input type="checkbox" value="1280" checked>1280 · xl&nbsp;boundary</label><label class="chip"><input type="checkbox" value="1024" checked>1024 · lg&nbsp;boundary</label><label class="chip"><input type="checkbox" value="768" checked>768 · md&nbsp;boundary</label></div></div>
         <div class="cfg-action"><button class="run" id="a-btn" onclick="runAudit()">Run audit</button><button class="run ghost" id="a-cancel" onclick="cancelScan('a')" style="display:none">Cancel</button><button class="run retry" id="a-retry" onclick="retryScan('a')" style="display:none">Retry</button></div>
       </div>
@@ -624,7 +646,9 @@ function appPage() {
               <label class="fld" style="min-width:0">Reference URL<input id="v-ref" type="text" placeholder="old / source site" spellcheck="false"></label>
               <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="v-tgt" type="text" placeholder="new / SGEN site" spellcheck="false"></label>
             </div>
-            <div class="cs-col">
+            <!-- mode / scope / max / warm-up / viewports all live in the gear now: every one of them
+                 binds to FIELDS.visual. Hidden, not deleted — runVisual() still reads these nodes. -->
+            <div class="cs-col settings-owned">
               <div class="grp"><div class="glab">Comparison mode <span class="help" tabindex="0">?<span class="tip"><b>Comparison mode</b>The pixel diff only means something when the two sites are meant to look the SAME. <b style="display:inline">Like-for-like</b> = same design on a new platform: pixel diff on and scored. <b style="display:inline">Redesign</b> = the new site is meant to look different: pixel diff off, and the match score is structural only — what the old site had vs what the new build still has.<em>Wrong mode on a redesign = a page of differences that are all intentional.</em></span></span></div>
                 <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
                   <select id="v-mode" style="flex:1;min-width:0;max-width:340px"><option value="like-for-like">Like-for-like replatform (pixel diff on)</option><option value="redesign">Redesign (pixel diff off — structure only)</option></select></div></div>
@@ -638,7 +662,7 @@ function appPage() {
             </div>
           </div>
           <div class="vc-foot">
-            <div class="grp"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>The structural diff and the typography read always run. The pixel axis depends on the comparison mode — it is only meaningful when the two sites are supposed to look the same.<em>Like-for-like: pixel + structure. Redesign: structure only.</em></span></span></div>
+            <div class="grp settings-owned"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>The structural diff and the typography read always run. The pixel axis depends on the comparison mode — it is only meaningful when the two sites are supposed to look the same.<em>Like-for-like: pixel + structure. Redesign: structure only.</em></span></span></div>
               <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:10px 13px">
                 Each paired page is compared at every selected viewport on the
                 <b style="display:inline;color:var(--ink)">structural diff</b> — elements <b style="display:inline;color:var(--ink)">missing</b>, <b style="display:inline;color:var(--ink)">extra</b>, <b style="display:inline;color:var(--ink)">moved</b>, or <b style="display:inline;color:var(--ink)">restyled</b> vs the reference — plus a page-level
@@ -664,7 +688,9 @@ function appPage() {
               <label class="fld" style="min-width:0">Source URL<input id="c-src" type="text" placeholder="original site" spellcheck="false"></label>
               <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="c-tgt" type="text" placeholder="migrated SGEN site" spellcheck="false"></label>
             </div>
-            <div class="cs-col">
+            <!-- sitemap-only / visual stage / production validation / max pages all live in the gear
+                 now: every one binds to FIELDS.cert. Hidden, not deleted — runCert() still reads these. -->
+            <div class="cs-col settings-owned">
               <div class="grp"><div class="glab">Migration options</div><div class="opts" style="margin-top:0;flex-direction:column;align-items:flex-start;gap:11px">
                 <label><input id="c-sitemap" type="checkbox"> sitemap-only completeness <span class="help" tabindex="0">?<span class="tip"><b>Sitemap-only</b>Uses the sitemap as the authoritative page list. Recommended for migration completeness checks. Without it, a capped crawl reports completeness as <b style="display:inline">manual</b>, never authoritative.<em>Example: certify docs.sgen.com → staging against the sitemap.</em></span></span></label>
                 <label><input id="c-visual" type="checkbox"> visual comparison stage</label>
@@ -674,7 +700,7 @@ function appPage() {
             </div>
           </div>
           <div class="vc-foot">
-            <div class="grp"><div class="glab">Evidence <span class="help" tabindex="0">?<span class="tip"><b>Evidence</b>Every finding must have proof (screenshot / DOM / network). Findings without available proof are marked <b style="display:inline">Manual Verification Required</b> — never silently passed.</span></span></div>
+            <div class="grp settings-owned"><div class="glab">Evidence <span class="help" tabindex="0">?<span class="tip"><b>Evidence</b>Every finding must have proof (screenshot / DOM / network). Findings without available proof are marked <b style="display:inline">Manual Verification Required</b> — never silently passed.</span></span></div>
               <div class="hint">Findings carry inventory IDs, status, and an evidence package.</div></div>
             <div class="row"><button class="run" id="c-btn" onclick="runCert()">Run certification</button><button class="run ghost" id="c-cancel" onclick="cancelScan('c')" style="display:none">Cancel</button><button class="run retry" id="c-retry" onclick="retryScan('c')" style="display:none">Retry</button></div>
           </div>
@@ -921,10 +947,12 @@ function appPage() {
     var TOUR=[
       {tab:'audit',target:null,lbl:'Welcome',title:'SGEN Site QA',body:"Four offline tools to check any website's quality — audit, compare, verify a migration, and review reports. Nothing leaves this machine. Let me show you around."},
       {tab:'audit',target:'.tabbar',lbl:'Navigation',title:'Four tools, one app',body:'Switch tools here — the header and these tabs stay locked in place as you scroll. Site Audit checks one site · Visual Comparison diffs old vs new · Post-Deployment Check verifies a migration · Reports holds past runs.'},
-      {tab:'audit',target:'#a-url',lbl:'Tool 1 · Site Audit',title:'Enter any site URL',body:'Point it at a live site; the scan configuration sits beside it. Everything you set — URLs, options, viewports — is saved automatically, so you never re-enter it next launch.'},
+      {tab:'audit',target:'#a-url',lbl:'Tool 1 · Site Audit',title:'Enter any site URL',body:'Point it at a live site and run it — that is the whole dashboard. How it scans (max pages, browser render, viewports, which checks score) lives behind Settings, and the URLs you type are saved automatically, so you never re-enter them next launch.'},
       {tab:'audit',target:'#a-btn',lbl:'Tool 1 · Site Audit',title:'Read the result at a glance',body:'The report opens with one clear OVERALL pass/fail up top; the other numbers are 0–100 quality reads, not separate verdicts. The summary cards are clickable — jump straight to the failing checks — and a colour key explains that red means passing.'},
       {tab:'visual',target:'#v-ref',lbl:'Tool 2 · Visual Comparison',title:'Old vs new, side by side',body:'Give a reference URL and a target URL. Every paired page is compared at each viewport on two axes: pixel match and structural diff (missing / extra / moved / restyled elements).'},
-      {tab:'visual',target:'#v-vps',lbl:'Tool 2 · Viewports',title:'Real devices, really emulated',body:'Ten current devices — Desktop, MacBook Air, iPad Air/mini, iPhone, Galaxy S — each checked against the vendor spec and emulated with real touch and pixel density, not just a narrow window. Below the line sit three framework boundary probes: width only, honestly labelled, because a layout breaks exactly on a breakpoint.'},
+      // Targets the gear, not #v-vps: the viewport chips are settings-owned (display:none) and a hidden
+      // node measures 0x0, so spotlighting it would frame nothing in the corner of the screen.
+      {tab:'visual',target:'#gear-visual',lbl:'Tool 2 · Settings',title:'Real devices, really emulated',body:'Open Settings to choose what a comparison does: like-for-like or redesign, how many pages, and the viewports. Ten current devices — Desktop, MacBook Air, iPad Air/mini, iPhone, Galaxy S — each checked against the vendor spec and emulated with real touch and pixel density, not just a narrow window. Below the line sit three framework boundary probes: width only, honestly labelled, because a layout breaks exactly on a breakpoint. Every tool has its own gear.'},
       {tab:'cert',target:'#c-src',lbl:'Tool 3 · Post-Deployment Check',title:'Did everything make it across?',body:'After a migration, this inventories every page, section, image, menu and form on the source and verifies each exists intact on the new build — with a PASS / MINOR / FAIL verdict.'},
       {tab:'reports',target:'[data-t=reports]',lbl:'Tool 4 · Reports',title:'Every run, grouped by site',body:'Past runs are grouped by site, newest first, with a search box and a date filter. Preview any run, open its HTML, or save it as a PDF to hand off. Runs stay on this machine.'},
       {tab:'audit',target:'#upd-btn',lbl:'Updates',title:'Automatic check, manual apply',body:'The app checks for updates on its own — this button turns red and a toast appears when one is ready. Click it to download, then Restart: a one-second in-app update, no installer.'},
