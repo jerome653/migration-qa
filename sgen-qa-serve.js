@@ -55,7 +55,7 @@ let MANUAL_HTML = ''; try { MANUAL_HTML = fs.readFileSync(path.join(__dirname, '
 // The literal below is the fallback used only when this dir is NOT named like a version (dev checkout).
 // BUMP IT EVERY RELEASE — it has already gone stale twice. Keep in sync with package.json "version"
 // and lib/site-qa/release-metadata.json packageVersion.
-const SELF_VER = (path.basename(__dirname).match(/^\d+\.\d+\.\d+$/) || ['3.0.2'])[0];
+const SELF_VER = (path.basename(__dirname).match(/^\d+\.\d+\.\d+$/) || ['3.0.3'])[0];
 const NOTES_DIR = path.join(process.env.APPDATA || process.env.HOME || __dirname, 'SGEN Site QA');
 const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // Newest first. Each shipped engine carries its own notes; older entries are kept for the in-app log.
@@ -383,6 +383,10 @@ function appPage() {
   .pbar{height:8px;background:var(--surface-2);border:1px solid var(--line);border-radius:99px;overflow:hidden;display:none;margin-top:12px}.pbar.on{display:block}
   .pfill{height:100%;width:0;background:var(--brand);transition:width .35s ease;border-radius:99px}
   .cmplink{font-size:13px;margin-top:10px}.cmplink a{color:var(--brand);font-weight:600}
+  .vseg{display:inline-flex;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden;vertical-align:middle;margin-right:4px}
+  .vbt{background:var(--surface-2);border:0;border-right:1px solid var(--line-strong);color:var(--ink-soft);padding:6px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
+  .vbt:last-child{border-right:0}
+  .vbt.on{background:var(--brand-solid);color:#fff}
   iframe{width:100%;height:auto;min-height:72vh;border:1px solid var(--line);border-radius:12px;background:var(--ground);display:block;overflow:hidden;margin-top:14px}
   .pipe{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);font-size:11.5px}
   .pipe span{padding:4px 9px;border:1px solid var(--line);border-radius:99px;color:var(--ink-faint)}
@@ -439,7 +443,13 @@ function appPage() {
      hidden node. Delete these inputs and you break BOTH the scan AND the popup that edits them.
      The dashboard therefore shows only the per-run inputs (the URLs, the save-as name) + the gear
      + the run button; everything that is a SETTING is edited in the popup. */
-  .settings-owned{display:none}
+  /* !important is deliberate. This class means "this control now lives in the settings popup; never
+     render it on the dashboard" — an absolute rule, not a suggestion. Without it the class silently
+     loses: label.fld{display:flex} above is specificity 0-1-1 and beats a bare .settings-owned (0-1-0)
+     no matter what order they appear in, so the Save-as-reference label kept rendering at full width
+     while every class-matched group hid correctly. Anything tagged settings-owned must stay in the DOM
+     (the runner reads these nodes and the popup binds to them) but must never paint. */
+  .settings-owned{display:none!important}
   /* the run button keeps its right edge once the info block beside it is settings-owned */
   .vc-foot{justify-content:flex-end}
   /* help bubble */
@@ -612,14 +622,18 @@ function appPage() {
       <div class="card">
         <div class="cfg-split cfg-au">
           <label class="fld" style="min-width:0">Site URL<input id="a-url" type="text" placeholder="e.g. sgen.com" spellcheck="false"></label>
-          <!-- "Save report as" is a per-RUN input, not a setting: it names the baseline this one scan is
-               stored as (apiRun calls saveBaseline only when opts.save is set). It has NO field in the settings
-               popup — see the per-run persistence note at the bottom of this script, which keeps it in
-               the same class as the URLs on purpose — so hiding it would not move it, it would delete
-               the "save the live site, then compare staging to it" flow outright, while localStorage
-               kept silently re-applying the last name typed. It stays on the dashboard beside the URL.
-               If it ever should go: add .settings-owned here, but give it a home first. -->
-          <label class="fld" style="min-width:0"><span>Save report as <span class="help" tabindex="0">?<span class="tip"><b>Save report as</b>Stores this scan as a reference for future comparisons.<em>Example: save the live site, then compare staging to it.</em></span></span></span><input id="a-save" type="text" placeholder="reference name" spellcheck="false"></label>
+          <!-- "Save report as" now lives in the Site Audit settings popup as a perRun field, so the
+               dashboard is URL + gear + Audit like every other tool. It is HIDDEN, not deleted: runAudit()
+               reads #a-save straight from this node and the popup binds to it.
+               It is per-RUN, never a default, and runAudit() CLEARS it once a scan consumes it. That is
+               load-bearing, not tidiness: saveBaseline() (compare.js) is an unconditional writeFileSync
+               over baselines/<name>.json — no existence check, no versioning. A remembered name silently
+               re-points the reference at whatever you scanned next: save "live", scan staging, and the
+               "live" baseline IS staging, so Visual Comparison diffs staging against itself and reports a
+               false all-clear. The old sticky localStorage entry did exactly that; it was survivable only
+               because the field was visible. Hidden + sticky would have made it silent, so the stickiness
+               had to go with the visibility. -->
+          <label class="fld settings-owned" style="min-width:0"><span>Save report as <span class="help" tabindex="0">?<span class="tip"><b>Save report as</b>Stores this scan as a reference for future comparisons.<em>Example: save the live site, then compare staging to it.</em></span></span></span><input id="a-save" type="text" placeholder="reference name" spellcheck="false"></label>
           <div class="cs-cfg settings-owned">
             <div class="glab">Scan Configuration</div>
             <div class="cfg-grid">
@@ -853,12 +867,39 @@ function appPage() {
     // tool 2 you had to leave, find your own run in a list, and click through — the tool that PRODUCES
     // the artifact never offered to mark it up. Keyed off the route, not the tool prefix, so it stays
     // correct wherever showReport is called from.
+    // ---- results views -------------------------------------------------------------------------
+    // Annotate is a PRIMARY view of the results, level with the report itself: it swaps THIS frame in
+    // place. It used to be a target="_blank" link, which meant the one action whose entire point is
+    // marking up what you are looking at was the only one that threw you out of the page to do it.
+    // autosize() re-fits on the iframe's load event, so a src swap re-fits on its own — no extra wiring.
+    var VIEW={};
+    function viewRoute(pre){var st=VIEW[pre];return st&&st.mode==='annotate'?st.annotate:st&&st.report;}
+    function setView(pre,mode){
+      var st=VIEW[pre];if(!st||st.mode===mode)return;
+      if(mode==='annotate'&&!st.annotate)return;
+      st.mode=mode;
+      var f=$(pre+'-frame').querySelector('iframe');
+      if(f)f.src=viewRoute(pre);
+      paintView(pre);
+    }
+    function paintView(pre){
+      var st=VIEW[pre];if(!st)return;
+      var seg=st.annotate?'<span class="vseg">'
+        +'<button class="vbt'+(st.mode==='report'?' on':'')+'" onclick="setView(\\''+pre+'\\',\\'report\\')">'+sEsc(st.label)+'</button>'
+        +'<button class="vbt'+(st.mode==='annotate'?' on':'')+'" onclick="setView(\\''+pre+'\\',\\'annotate\\')">'+'✎ Annotate'+'</button>'
+        +'</span>':'';
+      // "Save as PDF" is the REPORT view's export and is shown only there, for two hard reasons:
+      // /api/pdf's route regex accepts /report|/visual|/certify and would 400 on /annotate/<id>, and the
+      // annotate page ships its own Export PDF (#pdfbtn -> /api/annotate-pdf) which is the one that
+      // carries the marks. A generic "Save as PDF" while marking up would hand back the UNMARKED report.
+      var pdf=(st.mode==='report')?' &nbsp; <a href="/api/pdf?route='+encodeURIComponent(st.report)+'">⬇ Save as PDF</a>':'';
+      $(pre+'-link').innerHTML=seg+pdf+' &nbsp; <a href="'+viewRoute(pre)+'" target="_blank">↗ Open in a new tab</a>';
+    }
     function showReport(pre,route,label){
       var ph=$(pre+'-ph'); if(ph)ph.style.display='none';
-      var ann=route.indexOf('/visual/')===0
-        ? ' &nbsp; <a href="/annotate/'+route.slice(8)+'" target="_blank">✎ Annotate &amp; export PDF</a>' : '';
-      $(pre+'-link').innerHTML='<a href="'+route+'" target="_blank">↗ Open '+label+' in a new tab</a>'
-        +' &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a>'+ann;
+      var isVis=route.indexOf('/visual/')===0;
+      VIEW[pre]={report:route,annotate:isVis?'/annotate/'+route.slice(8):'',mode:'report',label:label||'Report'};
+      paintView(pre);
       var f=document.createElement('iframe');f.scrolling='no';autosize(f);f.src=route;
       $(pre+'-frame').appendChild(f);
     }
@@ -867,7 +908,17 @@ function appPage() {
     // 1 Site Audit
     function runAudit(){var url=$('a-url').value.trim();if(!url){$('a-status').textContent='Enter a site URL.';return;}
       var vps=checked('a-vps').map(function(w){return VPMAP[w]});
-      stream('/api/run',{url:url,maxPages:+$('a-max').value||1,render:$('a-render').checked,viewports:vps,save:$('a-save').value.trim(),excludeRules:SCOPE_EXCLUDED},'a',function(m){
+      // CONSUME the save-as name: read it once, then clear the field. saveBaseline() (compare.js) is an
+      // unconditional writeFileSync over baselines/<name>.json, so a name left sitting in #a-save would
+      // silently re-point that reference at the NEXT thing you scan — save "live", then scan staging, and
+      // your "live" baseline becomes staging. Visual Comparison would then diff staging against itself
+      // and report a false all-clear. Saving a baseline is a deliberate one-shot act, so the field has to
+      // empty when a run takes it. Cleared before the request, not in the callback: a second Audit click
+      // while the first is still streaming would otherwise re-send the same name.
+      var saveAs=$('a-save').value.trim();
+      $('a-save').value='';
+      if(saveAs)$('a-status').textContent='Saving this scan as reference “'+saveAs+'”…';
+      stream('/api/run',{url:url,maxPages:+$('a-max').value||1,render:$('a-render').checked,viewports:vps,save:saveAs,excludeRules:SCOPE_EXCLUDED},'a',function(m){
         if(!m.ok){$('a-status').textContent='Scan failed: '+(m.error||'unknown');return;}
         var q=(m.quality!=null?' · quality '+m.quality:'');
         // A de-scoped run must never read as a whole one, here either — not just in the report.
@@ -935,10 +986,11 @@ function appPage() {
       var route=elm.dataset.route,json=elm.dataset.json;
       $('r-ph').style.display='none';
       // Visual runs get the annotate lane: mark up live-vs-staging, then export those marks as a PDF.
-      var ann=route.indexOf('/visual/')===0?' &nbsp; <a href="/annotate/'+route.slice(8)+'" target="_blank">✎ Annotate &amp; export PDF</a>':'';
-      $('r-preview').innerHTML='<div class="cmplink"><a href="'+route+'" target="_blank">↗ Open HTML</a> &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a>'+ann+'</div>';
-      var fr=document.createElement('iframe');fr.scrolling='no';autosize(fr);fr.src=route;
-      $('r-preview').appendChild(fr);
+        // Same lane as the tools: Annotate is a VIEW of this preview, not another tab. Reuses
+        // showReport() so the Reports tab and the tool results cannot drift apart. r-ph is a SIBLING of
+        // r-preview, so replacing this innerHTML does not destroy the placeholder showReport hides.
+        $('r-preview').innerHTML='<div class="cmplink" id="r-link"></div><div id="r-frame"></div>';
+        showReport('r',route,'Report');
     }
 
     // Guided tour — spotlight coach-marks that switch tabs + highlight the real controls (shown once
@@ -1089,7 +1141,12 @@ function appPage() {
         {k:'maxPages',t:'num',bind:'a-max',min:1,max:500,label:'Max pages to crawl',hint:'1 = homepage only; higher follows the sitemap + internal links up to this cap. Sent to the scan as maxPages.'},
         {k:'render',t:'bool',bind:'a-render',label:'Browser render pass',hint:'Loads each page in a real headless browser for axe-core accessibility, Core Web Vitals, full-page screenshots and the Firefox + WebKit pass. Off = a faster static-only scan that cannot see any of those.'},
         {k:'viewports',t:'vps',bind:'a-vps',label:'Viewports swept',hint:'The responsive sweep. Devices are really emulated (touch, pixel density, mobile UA); the boundary probes are width only. Fewer = faster.'},
-        {k:'scope',t:'scope',label:'Checks included in the score',hint:'Untick a check and the Quality score is recalculated across what is left ALONE — the excluded risk leaves the total, not just the deductions.'}
+        {k:'scope',t:'scope',label:'Checks included in the score',hint:'Untick a check and the Quality score is recalculated across what is left ALONE — the excluded risk leaves the total, not just the deductions.'},
+        // perRun: rendered here for discoverability, but NOT a setting. Excluded from the gear's custom
+        // dot, from "Save as default", and from the load path. Making it a normal field would persist the
+        // name server-side (saveAsDefault POSTs DRAFT) — the same silent-overwrite bug as the old
+        // localStorage entry, but in a store that survives clearing localStorage. See #a-save.
+        {k:'saveAs',t:'text',bind:'a-save',perRun:true,ph:'reference name',label:'Save this scan as a reference (this run only)',hint:'Names the baseline THIS scan is stored as, so Visual Comparison can diff a later scan against it. Example: save the live site, then compare staging to it. Deliberately per-run: it is never kept as a default and clears once a scan uses it, because saving a baseline overwrites any reference of the same name — a remembered name would silently re-point your reference at whatever you scanned next.'}
       ],
       visual:[
         // Binds to #v-mode, the live select runVisual() reads — same contract as every other field
@@ -1148,7 +1205,13 @@ function appPage() {
     // FACTORY = the authored DOM, snapshotted NOW (parse time) before anything restores over it.
     var FACTORY={};Object.keys(FIELDS).forEach(function(t){FACTORY[t]=readTool(t);});
     var SAVED={},curTool='audit',DRAFT={};
-    function isCustom(tool){return JSON.stringify(readTool(tool))!==JSON.stringify(FACTORY[tool]);}
+    // A perRun field sits in the popup but is not a setting. It must never reach the defaults store, the
+    // factory comparison, or the load path — otherwise "Save as default" would make a one-shot value
+    // permanent. Strip it at every boundary where a settings OBJECT is compared or persisted.
+    function stripPerRun(tool,o){var c=clone(o||{});(FIELDS[tool]||[]).forEach(function(f){if(f.perRun)delete c[f.k];});return c;}
+    // Compare on the stripped object, or typing a save-as name would paint the gear "custom" — telling
+    // you the tool's settings had changed when nothing about how it scans did.
+    function isCustom(tool){return JSON.stringify(stripPerRun(tool,readTool(tool)))!==JSON.stringify(stripPerRun(tool,FACTORY[tool]));}
     function paintGears(){Object.keys(TOOLS).forEach(function(t){var g=$('gear-'+t);if(g)g.classList.toggle('custom',isCustom(t));});}
     function openSettings(tool){
       curTool=tool;DRAFT=clone(readTool(tool));
@@ -1165,6 +1228,9 @@ function appPage() {
         var ctl='';
         if(f.t==='bool')ctl='<label class="sw"><input type="checkbox"'+(DRAFT[f.k]?' checked':'')+' onchange="setF(\\''+f.k+'\\',this.checked)" aria-label="'+sEsc(f.label)+'"><i></i></label>';
         if(f.t==='num')ctl='<input type="number" value="'+sEsc(DRAFT[f.k])+'" min="'+f.min+'" max="'+f.max+'" onchange="setF(\\''+f.k+'\\',+this.value)" aria-label="'+sEsc(f.label)+'">';
+        // oninput, not onchange: onchange only fires on blur, so clicking Apply straight after typing
+        // would commit a DRAFT that never saw the last keystroke.
+        if(f.t==='text')ctl='<input type="text" value="'+sEsc(DRAFT[f.k]||'')+'" placeholder="'+sEsc(f.ph||'')+'" spellcheck="false" oninput="setF(\\''+f.k+'\\',this.value)" aria-label="'+sEsc(f.label)+'">';
         if(f.t==='sel')ctl='<select onchange="setF(\\''+f.k+'\\',this.value)" aria-label="'+sEsc(f.label)+'">'+f.opts.map(function(o){return '<option value="'+sEsc(o[0])+'"'+(String(DRAFT[f.k])===o[0]?' selected':'')+'>'+sEsc(o[1])+'</option>';}).join('')+'</select>';
         return '<div class="opt"><div class="otx"><b>'+sEsc(f.label)+'</b><span>'+sEsc(f.hint)+'</span></div><div class="octl">'+ctl+'</div></div>';
       }).join('');
@@ -1219,7 +1285,7 @@ function appPage() {
     }
     function saveAsDefault(){
       applySettings('keep');
-      fetch('/api/settings',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tool:curTool,values:DRAFT})})
+      fetch('/api/settings',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tool:curTool,values:stripPerRun(curTool,DRAFT)})})
         .then(function(r){return r.json();}).then(function(d){
           if(!d||!d.ok)throw new Error((d&&d.error)||'save failed');
           SAVED=d.tools||{};$('set-saved').textContent='\\u2713 saved as default';
@@ -1240,19 +1306,26 @@ function appPage() {
     // disjoint controls (settings here, per-run URL/name text there), so their order does not matter.
     fetch('/api/settings').then(function(r){return r.json();}).then(function(d){
       SAVED=(d&&d.tools)||{};
-      Object.keys(FIELDS).forEach(function(t){if(SAVED[t])writeTool(t,SAVED[t]);});
+      Object.keys(FIELDS).forEach(function(t){if(SAVED[t])writeTool(t,stripPerRun(t,SAVED[t]));});
       if(SAVED.reports)AFTER.reports();
       paintGears();
     }).catch(function(){});
     document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSettings();});
 
-    // Per-RUN inputs (the URLs you type and the save-as name) still stick automatically across
-    // launches — those are not settings and have no popup. Everything that IS a setting moved to the
-    // per-tool popup above and persists server-side via Save as default, so it is no longer mirrored
-    // here: two writers for one control is how a saved value silently loses a race on load.
+    // The URLs you type still stick automatically across launches — they are not settings and have no
+    // popup. Everything that IS a setting moved to the per-tool popup above and persists server-side via
+    // Save as default, so it is no longer mirrored here: two writers for one control is how a saved value
+    // silently loses a race on load.
+    //
+    // #a-save is DELIBERATELY NOT in this list any more. It used to be, alongside the URLs, and that was
+    // a live false-data path: saveBaseline() overwrites baselines/<name>.json unconditionally, so a
+    // remembered name re-saved the reference on the next scan of anything. Save "live", relaunch, scan
+    // staging -> the "live" baseline IS staging, and Visual Comparison diffs staging against itself and
+    // calls it clean. Being visible on the dashboard was the only thing that made it survivable; now that
+    // it lives behind the gear, remembering it would make it silent. It is one-shot: runAudit() clears it.
     (function(){
       var KEY='sgenqa_form_v1';
-      var IDS=['a-url','a-save','v-ref','v-tgt','c-src','c-tgt'];
+      var IDS=['a-url','v-ref','v-tgt','c-src','c-tgt'];
       function lsGet(){try{return JSON.parse(localStorage.getItem(KEY)||'{}');}catch(e){return {};}}
       function load(cb){ if(window.sgenApp&&sgenApp.getFlag){sgenApp.getFlag(KEY).then(function(v){cb(v?JSON.parse(v):lsGet());}).catch(function(){cb(lsGet());});} else cb(lsGet()); }
       function store(s){var j=JSON.stringify(s);if(window.sgenApp&&sgenApp.setFlag){try{sgenApp.setFlag(KEY,j);}catch(e){}}try{localStorage.setItem(KEY,j);}catch(e){}}
