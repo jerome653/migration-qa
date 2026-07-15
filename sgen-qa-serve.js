@@ -625,6 +625,9 @@ function appPage() {
               <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="v-tgt" type="text" placeholder="new / SGEN site" spellcheck="false"></label>
             </div>
             <div class="cs-col">
+              <div class="grp"><div class="glab">Comparison mode <span class="help" tabindex="0">?<span class="tip"><b>Comparison mode</b>The pixel diff only means something when the two sites are meant to look the SAME. <b style="display:inline">Like-for-like</b> = same design on a new platform: pixel diff on and scored. <b style="display:inline">Redesign</b> = the new site is meant to look different: pixel diff off, and the match score is structural only — what the old site had vs what the new build still has.<em>Wrong mode on a redesign = a page of differences that are all intentional.</em></span></span></div>
+                <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
+                  <select id="v-mode" style="flex:1;min-width:0;max-width:340px"><option value="like-for-like">Like-for-like replatform (pixel diff on)</option><option value="redesign">Redesign (pixel diff off — structure only)</option></select></div></div>
               <div class="grp"><div class="glab">Scope <span class="help" tabindex="0">?<span class="tip"><b>Scope</b>How many pages to compare. <b style="display:inline">Full site</b> discovers additional linked pages — useful for audits, but may surface non-canonical URLs (pagination, query variants).<em>Example: Single page for a fast homepage check.</em></span></span></div>
                 <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
                   <select id="v-scope" style="flex:1;min-width:0;max-width:340px"><option value="single">Single page (homepage)</option><option value="multiple">Multiple pages (up to max)</option><option value="sitemap">Sitemap-driven</option><option value="full">Full site</option></select>
@@ -635,11 +638,12 @@ function appPage() {
             </div>
           </div>
           <div class="vc-foot">
-            <div class="grp"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>Every comparison runs the full check — there is nothing to toggle.<em>Pixel match + structural diff at each viewport.</em></span></span></div>
+            <div class="grp"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>The structural diff and the typography read always run. The pixel axis depends on the comparison mode — it is only meaningful when the two sites are supposed to look the same.<em>Like-for-like: pixel + structure. Redesign: structure only.</em></span></span></div>
               <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:10px 13px">
-                Each paired page is compared at every selected viewport on two axes:
-                <b style="display:inline;color:var(--ink)">pixel match</b> (visual difference %) and
-                <b style="display:inline;color:var(--ink)">structural diff</b> — elements <b style="display:inline;color:var(--ink)">missing</b>, <b style="display:inline;color:var(--ink)">extra</b>, <b style="display:inline;color:var(--ink)">moved</b>, or <b style="display:inline;color:var(--ink)">restyled</b> vs the reference. The full check always runs.</div></div>
+                Each paired page is compared at every selected viewport on the
+                <b style="display:inline;color:var(--ink)">structural diff</b> — elements <b style="display:inline;color:var(--ink)">missing</b>, <b style="display:inline;color:var(--ink)">extra</b>, <b style="display:inline;color:var(--ink)">moved</b>, or <b style="display:inline;color:var(--ink)">restyled</b> vs the reference — plus a page-level
+                <b style="display:inline;color:var(--ink)">typography read</b> (a font the old site renders that the new build never uses). Both always run.
+                <b style="display:inline;color:var(--ink)">Pixel match</b> (visual difference %) runs on <b style="display:inline;color:var(--ink)">like-for-like</b> only: on a redesign the sites are meant to differ, so it is switched off rather than reported as noise. Screenshots of both sides are captured in either mode.</div></div>
             <div class="row"><button class="run" id="v-btn" onclick="runVisual()">Run visual comparison</button><button class="run ghost" id="v-cancel" onclick="cancelScan('v')" style="display:none">Cancel</button><button class="run retry" id="v-retry" onclick="retryScan('v')" style="display:none">Retry</button></div>
           </div>
         </div></div>
@@ -849,7 +853,7 @@ function appPage() {
     // 2 Visual Comparison
     function runVisual(){var ref=$('v-ref').value.trim(),tgt=$('v-tgt').value.trim();if(!ref||!tgt){$('v-status').textContent='Enter both Reference and Target URLs.';return;}
       var vps=checked('v-vps').map(function(w){return VPMAP[w]});
-      stream('/api/visual',{ref:ref,target:tgt,scope:$('v-scope').value,maxPages:+$('v-max').value||1,viewports:vps,axes:checked('v-ax'),warmLoads:+$('v-warm').value||3},'v',function(m){
+      stream('/api/visual',{ref:ref,target:tgt,mode:$('v-mode').value,scope:$('v-scope').value,maxPages:+$('v-max').value||1,viewports:vps,axes:checked('v-ax'),warmLoads:+$('v-warm').value||3},'v',function(m){
         if(!m.ok){$('v-status').textContent='Comparison failed: '+(m.error||'unknown');return;}
         $('v-status').innerHTML='Done — overall match '+m.overall+'% · '+m.pairs+' page(s) · '+m.viewports+' viewport(s)'+(m.sharp?'':' · (pixel diff off: sharp missing)');
         showReport('v','/visual/'+m.id,'visual report');});}
@@ -1060,6 +1064,10 @@ function appPage() {
         {k:'scope',t:'scope',label:'Checks included in the score',hint:'Untick a check and the Quality score is recalculated across what is left ALONE — the excluded risk leaves the total, not just the deductions.'}
       ],
       visual:[
+        // Binds to #v-mode, the live select runVisual() reads — same contract as every other field
+        // here (rule 1 above). FACTORY is the authored DOM, and #v-mode's first <option> is
+        // like-for-like, so the shipped default is today's behaviour: pixel pass ON, unchanged.
+        {k:'mode',t:'sel',bind:'v-mode',label:'Comparison mode',opts:[['like-for-like','Like-for-like replatform (pixel diff on)'],['redesign','Redesign (pixel diff off — structure only)']],hint:'The pixel diff only answers a question worth asking when the two sites are supposed to look the SAME. Like-for-like = same design, new platform: the diff is on and scored. Redesign = the new site is meant to look different: the diff is switched off (it would only measure the intent) and the match score becomes structural only — what the old site had vs what the new build still has. Both sides are still screenshotted either way.'},
         {k:'scope',t:'sel',bind:'v-scope',label:'Page scope',opts:[['single','Single page (homepage)'],['multiple','Multiple pages (up to max)'],['sitemap','Sitemap-driven'],['full','Full site']],hint:'How many pages to pair up and compare. Full site discovers additional linked pages and may surface non-canonical URLs.'},
         {k:'maxPages',t:'num',bind:'v-max',min:1,max:200,label:'Max pages',hint:'Upper bound on paired pages for the Multiple / Sitemap / Full scopes.'},
         {k:'warmLoads',t:'num',bind:'v-warm',min:1,max:5,label:'Warm-up loads',hint:'Load each page this many times before screenshotting so lazy-loaded / CDN-cold assets are in — fewer false diffs. 1 = no warm-up.'},
@@ -1700,10 +1708,12 @@ async function apiVisual(req, res) {
   let aborted = false; const onClose = () => { aborted = true; }; req.on('close', onClose); res.on('close', onClose);
   try {
     emit({ t: 'p', pct: 6, phase: 'discovering + rendering pages' });
-    const data = await visualMatch.run(ref, tgt, { maxPages, outDir, viewports: vps, axes: o.axes, warmLoads: o.warmLoads, log: () => {}, progress: (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct: Math.max(6, Math.min(96, pct || 0)), phase: phase || 'comparing' }); } });
+    // mode is normalized inside visualMatch.run (unknown → like-for-like), so a hand-rolled POST
+    // cannot smuggle a third mode past the engine — no second copy of that rule lives here.
+    const data = await visualMatch.run(ref, tgt, { maxPages, outDir, viewports: vps, axes: o.axes, warmLoads: o.warmLoads, mode: o.mode, log: () => {}, progress: (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct: Math.max(6, Math.min(96, pct || 0)), phase: phase || 'comparing' }); } });
     emit({ t: 'p', pct: 98, phase: 'writing report' });
     renderVisual(data, outDir);
-    emit({ t: 'done', ok: true, id, overall: data.overall, pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp }); res.end();
+    emit({ t: 'done', ok: true, id, overall: data.overall, pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp, mode: data.mode }); res.end();
   } catch (e) { if (!aborted) emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
 }
 
