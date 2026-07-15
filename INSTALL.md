@@ -10,7 +10,7 @@ Migration Certification · Reports. Runs locally, binds `127.0.0.1` only — no 
 
 ## Install
 ```
-git clone https://github.com/docssgen-admin/migration-qa.git
+git clone https://github.com/jerome653/migration-qa.git
 cd migration-qa
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```

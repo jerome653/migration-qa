@@ -14,7 +14,7 @@ that a migrated site is **complete**, **visually accurate**, and **production sa
 
 **One line (Windows PowerShell — no git needed):**
 ```
-irm https://raw.githubusercontent.com/docssgen-admin/migration-qa/main/bootstrap.ps1 | iex
+irm https://raw.githubusercontent.com/jerome653/migration-qa/main/bootstrap.ps1 | iex
 ```
 Fetches the tool, installs dependencies + the browser, runs the self-test, and creates a `qa` launcher.
 

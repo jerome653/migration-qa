@@ -1,9 +1,9 @@
 # SGEN Migration QA — one-line bootstrap installer.
 # Fetches the tool (git clone if available, else ZIP download), then runs install.ps1.
 # Run with:
-#   irm https://raw.githubusercontent.com/docssgen-admin/migration-qa/main/bootstrap.ps1 | iex
+#   irm https://raw.githubusercontent.com/jerome653/migration-qa/main/bootstrap.ps1 | iex
 $ErrorActionPreference = 'Stop'
-$repo = 'https://github.com/docssgen-admin/migration-qa'
+$repo = 'https://github.com/jerome653/migration-qa'
 $dir  = Join-Path (Get-Location) 'migration-qa'
 
 Write-Host "SGEN Migration QA — bootstrap" -ForegroundColor Cyan
