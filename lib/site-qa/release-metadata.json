@@ -1,5 +1,5 @@
 {
-  "packageVersion": "3.0.0",
+  "packageVersion": "3.0.1",
   "engineVersion": "2.3.0",
   "registryVersion": "1.11.0",
   "contractVersion": "1.0.0",
@@ -20,6 +20,6 @@
     "near-duplicate content"
   ],
   "generatedAt": "2026-07-15T08:21:48.870Z",
-  "gitTag": "v3.0.0",
+  "gitTag": "v3.0.1",
   "buildBaseCommit": "7103c82"
 }
