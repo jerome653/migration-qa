@@ -986,13 +986,23 @@ async function apiAnnotatePdf(req, res, u) {
   if (!model.totals.sheets) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: onlyAnnotated ? 'no annotated sheets yet — add a mark or a note first' : 'this run paired no pages' }));
   const dir = path.join(RUNS, annotate.EXPORTS_DIRNAME);
   try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
-  // Reserve the name BEFORE rendering so two exports fired back to back can't both resolve to v1.
-  const { name, version } = annotate.nextExportName(dir, model.domain, annotate.todayStamp());
-  const file = path.join(dir, name);
-  if (fs.existsSync(file)) return send(res, 409, 'application/json', JSON.stringify({ ok: false, error: 'export ' + name + ' already exists' }));
+  // Reserve the name BEFORE rendering, ATOMICALLY. A plain existsSync check would leave a wide
+  // TOCTOU window (the render takes seconds), so two exports fired together could both resolve to
+  // v1 and the second would silently clobber the first — exactly what the versioning rule exists to
+  // prevent. openSync(...,'wx') fails if the name is taken, so the winner owns it; retry to walk up
+  // to the next free version.
+  let name, version, file, fd = null;
+  for (let attempt = 0; attempt < 20 && fd === null; attempt++) {
+    ({ name, version } = annotate.nextExportName(dir, model.domain, annotate.todayStamp()));
+    file = path.join(dir, name);
+    try { fd = fs.openSync(file, 'wx'); } catch (e) { if (e.code !== 'EEXIST') throw e; fd = null; }
+  }
+  if (fd === null) return send(res, 409, 'application/json', JSON.stringify({ ok: false, error: 'could not reserve an export filename for ' + model.domain }));
+  fs.closeSync(fd);
+  const abandon = () => { try { const s = fs.statSync(file); if (!s.size) fs.unlinkSync(file); } catch (_) {} };
   let chromium;
   try { ({ chromium } = require('playwright')); }
-  catch (e) { return send(res, 501, 'application/json', JSON.stringify({ ok: false, error: 'PDF export needs Playwright (npx playwright install chromium)' })); }
+  catch (e) { abandon(); return send(res, 501, 'application/json', JSON.stringify({ ok: false, error: 'PDF export needs Playwright (npx playwright install chromium)' })); }
   let browser;
   try {
     browser = await chromium.launch({ headless: true });
@@ -1014,6 +1024,7 @@ async function apiAnnotatePdf(req, res, u) {
     }));
   } catch (e) {
     if (browser) try { await browser.close(); } catch (_) {}
+    abandon();   // release the reserved name so a failed render doesn't burn a version number
     return send(res, 500, 'application/json', JSON.stringify({ ok: false, error: 'PDF export failed: ' + (e && e.message || e) }));
   }
 }
