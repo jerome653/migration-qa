@@ -1,11 +1,11 @@
 {
-  "packageVersion": "3.0.0",
+  "packageVersion": "3.0.2",
   "engineVersion": "2.3.0",
-  "registryVersion": "1.11.0",
+  "registryVersion": "1.12.0",
   "contractVersion": "1.0.0",
   "reportVersion": "1.3.0",
   "developerEvidenceTier": 1,
-  "ruleCount": 137,
+  "ruleCount": 138,
   "v2RuleCount": 32,
   "evidenceQuality": {
     "verified": 28,
@@ -20,6 +20,6 @@
     "near-duplicate content"
   ],
   "generatedAt": "2026-07-15T08:21:48.870Z",
-  "gitTag": "v3.0.0",
+  "gitTag": "v3.0.2",
   "buildBaseCommit": "7103c82"
 }

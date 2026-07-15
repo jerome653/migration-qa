@@ -3,6 +3,14 @@
 // sgen qa-serve — local web UI for the SGEN Site QA suite. FOUR independent tools, one browser app,
 // bound to 127.0.0.1 only. No AI at runtime; no fake results. Every button POSTs to the SAME frozen
 // engines the CLIs use — this file is UI-exposure ONLY and modifies none of them:
+//
+// ONE EXCEPTION, stated rather than buried: the per-tool settings popup's scope control needs the
+// scorer to be able to score a SUBSET of the registry, which the frozen engines could not express.
+// score.js therefore gained an opt-in `compute(suites, {excludeRules})` and report.js an opt-in
+// `opts.scopePanel` slot. Both default to the previous behaviour exactly (no opts => byte-identical
+// output => the CLIs and every existing caller are unchanged). Scope is a SCORING decision only:
+// this file never asks the engine to skip a check, so findings/evidence/tally/verdict/readiness stay
+// whole-site and a de-scoped run still reports every problem it found.
 //   1. Site Audit          -> runAudit + renderReport                (/api/run)
 //   2. Visual Comparison   -> visual-match.run + report-visual.render (/api/visual)
 //   3. Post-Deployment Check (engine: migration certification) -> discoverPages + certifyMigration (/api/certify)
@@ -15,7 +23,9 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { runAudit } = require('./lib/site-qa/audit');
+const { runAudit, SUITES: AUDIT_SUITES } = require('./lib/site-qa/audit');
+const { compute: computeQuality } = require('./lib/site-qa/score');
+const { RULES, WEIGHTS } = require('./lib/site-qa/rules/registry');
 const { renderReport, STYLE } = require('./lib/site-qa/report');
 const { saveBaseline, loadResult, diff, listBaselines, recordScan, loadLatestRecord } = require('./lib/site-qa/compare');
 const { renderCompare, renderComparePanel } = require('./lib/site-qa/report-compare');
@@ -45,7 +55,7 @@ let MANUAL_HTML = ''; try { MANUAL_HTML = fs.readFileSync(path.join(__dirname, '
 // The literal below is the fallback used only when this dir is NOT named like a version (dev checkout).
 // BUMP IT EVERY RELEASE — it has already gone stale twice. Keep in sync with package.json "version"
 // and lib/site-qa/release-metadata.json packageVersion.
-const SELF_VER = (path.basename(__dirname).match(/^\d+\.\d+\.\d+$/) || ['3.0.0'])[0];
+const SELF_VER = (path.basename(__dirname).match(/^\d+\.\d+\.\d+$/) || ['3.0.2'])[0];
 const NOTES_DIR = path.join(process.env.APPDATA || process.env.HOME || __dirname, 'SGEN Site QA');
 const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // Newest first. Each shipped engine carries its own notes; older entries are kept for the in-app log.
@@ -117,6 +127,50 @@ const CHANGELOG = [
     'Windows installer + Add/Remove Programs, scan cancel/retry, SGEN red theme, single-row tool tabs.'
   ] }
 ];
+// ---- per-tool settings: saved defaults -----------------------------------------------------------
+// Same persistence pattern as UPDATE_LOG above: a JSON file in NOTES_DIR (the user-data dir), read
+// defensively, written best-effort. NOTES_DIR is deliberately the home rather than RUNS: a hot engine
+// update extracts a NEW build into NOTES_DIR/engines/<version>/, so anything stored under the engine
+// dir dies on the next update, and RUNS is scan OUTPUT (prunable). Settings sit beside update-log.json
+// and outlive both.
+//
+// Two slots ONLY, matching the two operations the UI offers:
+//   settings.tools.<tool>  the SAVED DEFAULT  — written by "Save as default", restored on page load
+//   FACTORY (client-side)  the reset target   — restored by "Reset defaults", which also clears the slot
+// There is deliberately no third "last used" slot: an implicit auto-stick tier would make "Save as
+// default" a no-op you could not observe, which is precisely the fake-looking-real control this build
+// is meant to remove.
+const SETTINGS_FILE = path.join(NOTES_DIR, 'settings.json');
+function readSettings() {
+  try {
+    const s = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return { tools: {} };
+    return { tools: (s.tools && typeof s.tools === 'object' && !Array.isArray(s.tools)) ? s.tools : {} };
+  } catch (_) { return { tools: {} }; }
+}
+function writeSettings(s) {
+  try { fs.mkdirSync(NOTES_DIR, { recursive: true }); fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ v: 1, tools: s.tools || {} }, null, 2)); return true; }
+  catch (e) { return false; }
+}
+const TOOL_KEYS = ['audit', 'visual', 'cert', 'reports'];
+
+// ---- scope catalog: the checks a Site Audit can be scored on -------------------------------------
+// Derived from the registry + audit.SUITES — never hand-listed, so a registry change flows straight
+// through to the UI. Only the 10 suites runAudit() actually assembles are offered: the registry also
+// carries best-practices + visual, but those are weight-0 advisory suites this tool never emits
+// (see the note in rules/registry.js), so listing them would be a control over nothing.
+// Manual rules are OMITTED, not shown disabled: they carry deduction 0 and can never move the score,
+// so a checkbox for one would be decoration.
+const SCOPE_SUITE_KEYS = AUDIT_SUITES.map(s => s.key);
+const SCOPE_CATALOG = {
+  suites: AUDIT_SUITES.map(s => ({ key: s.key, name: s.name, desc: s.desc || '', weight: WEIGHTS[s.key] || 0 })),
+  rules: RULES.filter(r => !r.manual && r.deduction > 0 && SCOPE_SUITE_KEYS.includes(r.suite))
+    .map(r => ({ id: r.id, suite: r.suite, ded: r.deduction, tier: r.tier, sev: r.severity, title: r.title })),
+  manualCount: RULES.filter(r => r.manual && SCOPE_SUITE_KEYS.includes(r.suite)).length,
+};
+const SCOPE_RULE_IDS = new Set(SCOPE_CATALOG.rules.map(r => r.id));
+const ruleById = new Map(RULES.map(r => [r.id, r]));
+
 function readHistory() { try { const h = JSON.parse(fs.readFileSync(UPDATE_LOG, 'utf8')); return Array.isArray(h) ? h : []; } catch (_) { return []; } }
 function recordVersion() {   // append only when the running version changes (an update landing), not every launch
   if (!SELF_VER) return readHistory();
@@ -187,6 +241,68 @@ function buildDiagnostics() {
   L.push('## Version notes (recent)');
   CHANGELOG.slice(0, 6).forEach(c => { L.push('### v' + c.version + ' (' + c.date + ')'); c.notes.forEach(n => L.push('- ' + n)); L.push(''); });
   return L.join('\n');
+}
+
+// ---- scope disclosure ---------------------------------------------------------------------------
+// A clean score on a reduced scope is the most dangerous artifact this tool can emit: the number
+// looks exactly like a whole-site pass, and a PDF of it walks out of the building with no hint that
+// the red checks were simply switched off. So the moment scope is reduced the report says so ABOVE
+// the score (report.js renders opts.scopePanel before the summary — you cannot reach the number
+// without passing the notice), it names how many hidden checks are OPEN DEFECTS, and it says plainly
+// which numbers are scoped and which are not. Fail closed, disclose always.
+const hEsc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function scopeFacts(data, excludedIds) {
+  const excluded = [...new Set(excludedIds || [])].filter((id) => SCOPE_RULE_IDS.has(id));
+  // Which rules actually fired in THIS run — so the notice can say "and 3 of them are open defects"
+  // rather than the toothless "some checks were excluded".
+  const fired = new Map();
+  for (const s of (data.suites || [])) for (const c of (s.checks || [])) {
+    if (!c.ruleId || (c.status !== 'fail' && c.status !== 'warn')) continue;
+    if (fired.get(c.ruleId) !== 'fail') fired.set(c.ruleId, c.status);
+  }
+  const openHidden = excluded.filter((id) => fired.has(id));
+  const blockersHidden = openHidden.filter((id) => { const r = ruleById.get(id); return r && r.tier === 1; });
+  const outBySuite = {};
+  for (const id of excluded) { const r = ruleById.get(id); if (r) (outBySuite[r.suite] = outBySuite[r.suite] || []).push(id); }
+  const fullyOut = SCOPE_CATALOG.suites.filter((s) => {
+    const all = SCOPE_CATALOG.rules.filter((r) => r.suite === s.key).length;
+    return all > 0 && (outBySuite[s.key] || []).length === all;
+  });
+  return { excluded, total: SCOPE_CATALOG.rules.length, openHidden, blockersHidden, fullyOut, outBySuite, verdict: data.verdict };
+}
+function buildScopePanel(f) {
+  if (!f.excluded.length) return '';
+  const pct = Math.round(f.excluded.length / f.total * 100);
+  const openLine = f.openHidden.length
+    ? `<b style="color:var(--fail)">${f.openHidden.length} of the excluded checks ${f.openHidden.length === 1 ? 'is an open defect' : 'are open defects'} on this site</b>${f.blockersHidden.length ? `, <b style="color:var(--fail)">including ${f.blockersHidden.length} launch blocker${f.blockersHidden.length > 1 ? 's' : ''}</b>` : ''} — real ${f.openHidden.length === 1 ? 'problem' : 'problems'} this score does not see`
+    : 'none of the excluded checks are currently failing on this site';
+  const suiteLine = f.fullyOut.length
+    ? `<div class="sc-row"><span class="sc-k">Sections switched off entirely</span><span class="sc-v">${f.fullyOut.map((s) => hEsc(s.name) + ' <i>(weight ' + s.weight + ')</i>').join(' · ')}</span></div>` : '';
+  const ids = f.openHidden.slice(0, 12).map((id) => { const r = ruleById.get(id); return hEsc(id) + (r ? ' ' + hEsc(r.title) : ''); });
+  return `<style>
+  .qa-scope{border:1px solid var(--fail);border-left:5px solid var(--fail);background:var(--fail-bg);border-radius:var(--radius);padding:16px 18px;margin:0 0 18px;display:flex;gap:14px;align-items:flex-start}
+  .qa-scope .sc-i{font-size:20px;line-height:1;color:var(--fail);flex:none;margin-top:1px}
+  .qa-scope b.sc-h{display:block;font-size:14.5px;color:var(--ink);letter-spacing:-.01em;margin-bottom:5px}
+  .qa-scope p{margin:0 0 9px;font-size:12.5px;color:var(--ink-soft);line-height:1.65}
+  .qa-scope .sc-row{display:flex;gap:10px;font-size:11.5px;line-height:1.6;padding:4px 0;border-top:1px solid var(--fail-line)}
+  .qa-scope .sc-k{flex:0 0 190px;color:var(--ink-faint);font-weight:650;text-transform:uppercase;letter-spacing:.05em;font-size:10px;padding-top:2px}
+  .qa-scope .sc-v{color:var(--ink-soft);min-width:0}
+  .qa-scope .sc-v i{color:var(--ink-faint);font-style:normal}
+  .qa-scope code{font-family:var(--mono);font-size:10.5px;color:var(--ink-soft)}
+  @media(max-width:700px){.qa-scope .sc-row{flex-direction:column;gap:2px}.qa-scope .sc-k{flex:none}}
+  </style>
+  <section class="qa-scope">
+    <div class="sc-i">&#9888;</div>
+    <div style="min-width:0">
+      <b class="sc-h">PARTIAL AUDIT — the quality score below does not describe the whole site.</b>
+      <p><b style="color:var(--ink)">${f.excluded.length}</b> of ${f.total} scorable checks (<b style="color:var(--ink)">${pct}%</b>) were excluded from scoring by the operator, so the Quality score is the share of resolved risk across the <i>selected checks alone</i>. ${openLine}.</p>
+      <div class="sc-row"><span class="sc-k">Scoped to the selection</span><span class="sc-v">The <b style="color:var(--ink)">Quality dashboard</b> (overall + per-suite 0–100). Excluding a check removes its risk from the numerator <b style="color:var(--ink)">and</b> the denominator, so an excluded section drops out of the weighted mean rather than scoring 100.</span></div>
+      <div class="sc-row"><span class="sc-k">NOT scoped — whole site</span><span class="sc-v">The <b style="color:var(--ink)">${hEsc(String((f.verdict || 'PASS/FAIL verdict')))}</b> verdict, the checks-passing ring, the tallies and the launch-readiness gate all still count <b style="color:var(--ink)">every</b> check that ran. De-scoping cannot buy a pass — only a higher quality number.</span></div>
+      ${suiteLine}
+      ${ids.length ? `<div class="sc-row"><span class="sc-k">Open defects hidden from the score</span><span class="sc-v"><code>${ids.join('</code> · <code>')}</code>${f.openHidden.length > 12 ? ' <i>+' + (f.openHidden.length - 12) + ' more</i>' : ''}</span></div>` : ''}
+      <div class="sc-row"><span class="sc-k">If you are sending this on</span><span class="sc-v">This notice must travel with the report. A reduced-scope score is not a site pass, and the PDF export carries this panel.</span></div>
+    </div>
+  </section>`;
 }
 
 // ---- shared page chrome (nav + shared runner) ---------------------------------------------------
@@ -294,8 +410,9 @@ function appPage() {
   .cfg-split>.fld,.cfg-split>.cs-cfg,.cfg-split>.cs-col{flex:1 1 300px;min-width:0}
   .cfg-split .glab{margin-bottom:9px}
   .cs-col>.grp:first-child{margin-top:0}
-  /* Site Audit: URL ~35%, scan config fills the rest on one row */
-  .cfg-au>.fld{flex:0 1 35%;min-width:200px}
+  /* Site Audit: the per-run inputs share the row. The Scan Configuration block that used to sit
+     beside them is settings-owned and hidden now (see .settings-owned), so they grow to fill. */
+  .cfg-au>.fld{flex:1 1 35%;min-width:200px}
   .cfg-au>.cs-cfg{flex:1 1 60%;min-width:0}
   .cfg-au .cfg-grid{flex-wrap:nowrap;align-items:center}
   @media(max-width:900px){.cfg-au>.fld,.cfg-au>.cs-cfg{flex:1 1 100%}.cfg-au .cfg-grid{flex-wrap:wrap}}
@@ -311,6 +428,20 @@ function appPage() {
   .cfg-action{display:flex;justify-content:flex-end;margin-top:18px}
   @media(max-width:820px){ .cfg-c,.cfg-g{flex:1 1 calc(50% - 24px)} }
   @media(max-width:520px){ .cfg-grid{gap:12px} .cfg-grid>label{flex:1 1 100%} .cfg-action{margin-top:14px} .cfg-action .run{width:100%} }
+  /* ---- controls the per-tool settings popup owns ---------------------------------------------
+     HIDDEN, NOT DELETED — deliberately. Read this before you "clean up" the markup below it.
+     Each control tagged .settings-owned is STILL the one source of truth the runner reads at run
+     time — runAudit() reads $('a-max') / $('a-render') / #a-vps, runVisual() reads $('v-mode') /
+     $('v-scope') / $('v-max') / $('v-warm') / #v-vps, runCert() reads $('c-sitemap') / $('c-visual')
+     / $('c-prod') / $('c-max') — and the settings popup is a second VIEW bound to these same nodes
+     (FIELDS[].bind + fGet/fSet, and FACTORY, which snapshots the authored DOM at parse time).
+     display:none changes none of that: .value, .checked and querySelectorAll all still work on a
+     hidden node. Delete these inputs and you break BOTH the scan AND the popup that edits them.
+     The dashboard therefore shows only the per-run inputs (the URLs, the save-as name) + the gear
+     + the run button; everything that is a SETTING is edited in the popup. */
+  .settings-owned{display:none}
+  /* the run button keeps its right edge once the info block beside it is settings-owned */
+  .vc-foot{justify-content:flex-end}
   /* help bubble */
   .help{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line-strong);color:var(--ink-soft);font-size:10px;font-weight:700;cursor:help;margin-left:6px;position:relative;font-family:var(--mono);vertical-align:middle}
   .help:hover,.help:focus{background:var(--brand-solid);color:#fff;border-color:var(--brand-solid);outline:none}
@@ -362,6 +493,82 @@ function appPage() {
   .logrel ul{margin:0;padding-left:18px}
   .logrel li{font-size:12.5px;color:var(--ink-soft);line-height:1.65;margin:2px 0}
   .help-btn:hover{color:var(--ink);border-color:var(--brand)}
+  /* ---- per-tool settings: gear + popup -------------------------------------------------------
+     The gear lives in each tool's PANEL HEADER, not in the tab bar: .tabbar items are <button>s and
+     a <button> inside a <button> is invalid HTML — browsers unnest it, so the gear would escape the
+     tab and the click target would be ambiguous. The panel header is unambiguous and stays reachable
+     once a tool is open, which is exactly when its settings matter. */
+  .tthead{display:flex;align-items:center;gap:12px;margin:0 0 4px}
+  .tthead h2.tt{margin:0;flex:1;min-width:0}
+  .gear{display:inline-flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--line-strong);color:var(--ink-soft);border-radius:9px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;flex:none;white-space:nowrap}
+  .gear:hover{color:var(--ink);border-color:var(--brand)}
+  .gear:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+  .gear .gi{font-size:13px;line-height:1}
+  .gear .gdot{width:6px;height:6px;border-radius:50%;background:var(--brand-solid);display:none}
+  .gear.custom .gdot{display:block}
+  .gear.custom{border-color:var(--brand);color:var(--ink)}
+  .setmodal{position:fixed;inset:0;z-index:130;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.62);padding:5vh 16px;overflow:auto}
+  .setmodal.on{display:flex}
+  .setcard{background:var(--surface);border:1px solid var(--line-strong);border-radius:14px;box-shadow:var(--shadow);width:720px;max-width:100%;display:flex;flex-direction:column;max-height:90vh}
+  .sethead{display:flex;align-items:center;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line);flex:none}
+  .sethead .sic{width:30px;height:30px;border-radius:9px;background:var(--brand-solid);color:#fff;display:grid;place-items:center;font-size:14px;flex:none}
+  .sethead .stt{display:flex;flex-direction:column;line-height:1.25;min-width:0;flex:1}
+  .sethead .stt b{font-size:15px;letter-spacing:-.01em}
+  .sethead .stt span{font-size:10px;font-family:var(--mono);color:var(--ink-faint);letter-spacing:.06em}
+  .setbody{padding:6px 20px 18px;overflow:auto;flex:1 1 auto}
+  .setfoot{display:flex;align-items:center;gap:9px;padding:13px 20px;border-top:1px solid var(--line);flex:none;flex-wrap:wrap}
+  .setfoot .sp{flex:1 1 auto}
+  .set-saved{font-size:11.5px;color:var(--brand-ink);font-weight:600;white-space:nowrap}
+  .bt{background:var(--surface-2);border:1px solid var(--line-strong);color:var(--ink);border-radius:8px;padding:8px 15px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .bt:hover{border-color:var(--brand)}
+  .bt.pri{background:var(--brand-solid);border-color:var(--brand-solid);color:#fff}
+  .bt.warn{color:var(--ink-soft)}
+  .bt.warn:hover{color:var(--ink)}
+  .opt{display:flex;align-items:center;gap:16px;padding:13px 0;border-top:1px solid var(--line)}
+  .opt:first-child{border-top:0}
+  .opt .otx{flex:1;min-width:0}
+  .opt .otx b{display:block;font-size:13px;color:var(--ink);font-weight:640;margin-bottom:3px}
+  .opt .otx span{display:block;font-size:11.5px;color:var(--ink-faint);line-height:1.6}
+  .opt .octl{flex:none}
+  .opt .octl input[type=number]{width:82px}
+  .opt .octl select{width:auto;min-width:190px}
+  .opt.col{display:block}
+  .opt.col .otx{margin-bottom:10px}
+  .sw{position:relative;display:inline-block;width:40px;height:22px;flex:none}
+  .sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:2}
+  .sw i{position:absolute;inset:0;background:var(--surface-2);border:1px solid var(--line-strong);border-radius:99px;transition:background .15s,border-color .15s}
+  .sw i:after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--ink-faint);transition:transform .15s,background .15s}
+  .sw input:checked+i{background:var(--brand-solid);border-color:var(--brand-solid)}
+  .sw input:checked+i:after{transform:translateX(18px);background:#fff}
+  .sw input:focus-visible+i{outline:2px solid var(--brand);outline-offset:2px}
+  /* scope tree — suite rows that expand to their individual checks */
+  .sc-tools{display:flex;align-items:center;gap:7px;margin-bottom:9px;flex-wrap:wrap}
+  .sc-tools .bt{padding:5px 11px;font-size:11.5px}
+  .sc-count{font-family:var(--mono);font-size:11px;color:var(--ink-faint);margin-left:auto}
+  .sc-count b{color:var(--brand-ink)}
+  .sc-count.part b{color:var(--ink)}
+  .sctree{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .scs{border-top:1px solid var(--line)}
+  .scs:first-child{border-top:0}
+  .scs-h{display:flex;align-items:center;gap:10px;padding:9px 11px;background:var(--surface-2);cursor:pointer;user-select:none}
+  .scs-h:hover{background:var(--surface)}
+  .scs-h .nm{flex:1;min-width:0;font-size:12.5px;font-weight:640;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .scs-h .mt{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);white-space:nowrap}
+  .scs-h .cv{font-size:10px;transition:transform .15s;color:var(--ink-faint);width:10px;text-align:center}
+  .scs.open .scs-h .cv{transform:rotate(90deg)}
+  .scs-b{display:none;padding:4px 11px 9px 40px;background:var(--ground)}
+  .scs.open .scs-b{display:block}
+  .scr{display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12px}
+  .scr .rid{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);flex:none;width:74px}
+  .scr .rt{flex:1;min-width:0;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .scr .rd{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);flex:none}
+  .scr.off .rt,.scr.off .rid{opacity:.4;text-decoration:line-through}
+  .scr input,.scs-h input[type=checkbox]{accent-color:var(--brand-solid);flex:none;width:14px;height:14px;cursor:pointer;margin:0}
+  .sc-note{font-size:11px;color:var(--ink-faint);line-height:1.6;margin-top:9px}
+  .sc-note b{color:var(--ink-soft);font-weight:640}
+  .sc-warn{margin-top:9px;border:1px solid var(--line-strong);border-left:3px solid var(--brand-solid);background:var(--surface-2);border-radius:8px;padding:9px 11px;font-size:11.5px;color:var(--ink-soft);line-height:1.6}
+  .sc-warn b{color:var(--ink)}
+  @media(max-width:620px){.opt{display:block}.opt .octl{margin-top:9px}.opt .octl select,.opt .octl input[type=number]{width:100%}.scs-b{padding-left:16px}.scr .rid{width:66px}}
   /* reports two-column */
   /* Reports: single column too — run list on top, full-width preview below */
   .rgrid{display:block}
@@ -401,20 +608,27 @@ function appPage() {
 
     <!-- 1 SITE AUDIT -->
     <section class="panel on" id="p-audit">
-      <h2 class="tt">Site Audit</h2><p class="sub">Full single-site tester — links, forms, responsive, accessibility (axe-core), SEO, performance, security (TLS), cross-browser (Firefox + WebKit), console. Independent: needs no inventory, comparison, or certification.</p>
+      <div class="tthead"><h2 class="tt">Site Audit</h2><button class="gear" id="gear-audit" onclick="openSettings('audit')" title="Site Audit settings" aria-label="Site Audit settings"><span class="gi">&#9881;</span>Settings<span class="gdot"></span></button></div><p class="sub">Full single-site tester — links, forms, responsive, accessibility (axe-core), SEO, performance, security (TLS), cross-browser (Firefox + WebKit), console. Independent: needs no inventory, comparison, or certification.</p>
       <div class="card">
         <div class="cfg-split cfg-au">
           <label class="fld" style="min-width:0">Site URL<input id="a-url" type="text" placeholder="e.g. sgen.com" spellcheck="false"></label>
-          <div class="cs-cfg">
+          <!-- "Save report as" is a per-RUN input, not a setting: it names the baseline this one scan is
+               stored as (apiRun calls saveBaseline only when opts.save is set). It has NO field in the settings
+               popup — see the per-run persistence note at the bottom of this script, which keeps it in
+               the same class as the URLs on purpose — so hiding it would not move it, it would delete
+               the "save the live site, then compare staging to it" flow outright, while localStorage
+               kept silently re-applying the last name typed. It stays on the dashboard beside the URL.
+               If it ever should go: add .settings-owned here, but give it a home first. -->
+          <label class="fld" style="min-width:0"><span>Save report as <span class="help" tabindex="0">?<span class="tip"><b>Save report as</b>Stores this scan as a reference for future comparisons.<em>Example: save the live site, then compare staging to it.</em></span></span></span><input id="a-save" type="text" placeholder="reference name" spellcheck="false"></label>
+          <div class="cs-cfg settings-owned">
             <div class="glab">Scan Configuration</div>
             <div class="cfg-grid">
               <label class="cfg-c">Max pages <input id="a-max" type="number" value="1" min="1" max="500"><span class="help" tabindex="0">?<span class="tip"><b>Max pages</b>How many pages to crawl and test. 1 = homepage only; higher follows the sitemap + internal links up to this cap.<em>Example: 1 for a quick single-page check.</em></span></span></label>
               <label class="cfg-c"><input id="a-render" type="checkbox" checked> Browser render <span class="help" tabindex="0">?<span class="tip"><b>Browser render</b>Loads each page in a real headless browser for axe-core accessibility, Core Web Vitals, full-page screenshots, and Firefox + WebKit. Off = faster static-only scan.</span></span></label>
-              <label class="cfg-g">Save report as <input id="a-save" type="text" placeholder="reference name" style="flex:1;min-width:120px"><span class="help" tabindex="0">?<span class="tip"><b>Save report as</b>Stores this scan as a reference for future comparisons.<em>Example: save the live site, then compare staging to it.</em></span></span></label>
             </div>
           </div>
         </div>
-        <div class="grp" style="margin-top:2px"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>What the browser-render responsive sweep tests. The 10 <b style="display:inline">devices</b> are really emulated — touch, pixel density, and the mobile UA on Android. The 3 <b style="display:inline">boundary probes</b> are width only: they test the layout on a framework breakpoint, not a device. Fewer = faster; all selected = the full matrix. AA colour-contrast still runs once even if 1920 is deselected.<em>Leave all selected to keep the standard 13-viewport sweep.</em></span></span></div><div class="chips" id="a-vps">
+        <div class="grp settings-owned" style="margin-top:2px"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>What the browser-render responsive sweep tests. The 10 <b style="display:inline">devices</b> are really emulated — touch, pixel density, and the mobile UA on Android. The 3 <b style="display:inline">boundary probes</b> are width only: they test the layout on a framework breakpoint, not a device. Fewer = faster; all selected = the full matrix. AA colour-contrast still runs once even if 1920 is deselected.<em>Leave all selected to keep the standard 13-viewport sweep.</em></span></span></div><div class="chips" id="a-vps">
           <label class="chip"><input type="checkbox" value="1920" checked>1920 · Desktop</label><label class="chip"><input type="checkbox" value="1440" checked>1440 · MacBook&nbsp;Air</label><label class="chip"><input type="checkbox" value="1180" checked>1180 · iPad&nbsp;Air&nbsp;LS</label><label class="chip"><input type="checkbox" value="820" checked>820 · iPad&nbsp;Air&nbsp;11</label><label class="chip"><input type="checkbox" value="744" checked>744 · iPad&nbsp;mini</label><label class="chip"><input type="checkbox" value="414" checked>414 · iPhone&nbsp;XR/11</label><label class="chip"><input type="checkbox" value="440" checked>440 · iPhone&nbsp;17&nbsp;Max</label><label class="chip"><input type="checkbox" value="393" checked>393 · iPhone&nbsp;16</label><label class="chip"><input type="checkbox" value="360" checked>360 · Galaxy&nbsp;S</label><label class="chip"><input type="checkbox" value="384" checked>384 · Galaxy&nbsp;S&nbsp;Ultra</label><div class="vpdiv">Breakpoint probes — width only, not devices</div><label class="chip"><input type="checkbox" value="1280" checked>1280 · xl&nbsp;boundary</label><label class="chip"><input type="checkbox" value="1024" checked>1024 · lg&nbsp;boundary</label><label class="chip"><input type="checkbox" value="768" checked>768 · md&nbsp;boundary</label></div></div>
         <div class="cfg-action"><button class="run" id="a-btn" onclick="runAudit()">Run audit</button><button class="run ghost" id="a-cancel" onclick="cancelScan('a')" style="display:none">Cancel</button><button class="run retry" id="a-retry" onclick="retryScan('a')" style="display:none">Retry</button></div>
       </div>
@@ -424,7 +638,7 @@ function appPage() {
 
     <!-- 2 VISUAL COMPARISON -->
     <section class="panel" id="p-visual">
-      <h2 class="tt">Visual Comparison</h2><p class="sub">Compare a reference site and a target site visually across industry device breakpoints — no prior audit, no certification, no stored inventory. Diffs page render + full DOM structure.</p>
+      <div class="tthead"><h2 class="tt">Visual Comparison</h2><button class="gear" id="gear-visual" onclick="openSettings('visual')" title="Visual Comparison settings" aria-label="Visual Comparison settings"><span class="gi">&#9881;</span>Settings<span class="gdot"></span></button></div><p class="sub">Compare a reference site and a target site visually across industry device breakpoints — no prior audit, no certification, no stored inventory. Diffs page render + full DOM structure.</p>
       <div class="toolgrid">
         <div class="col-left"><div class="card">
           <div class="cfg-split">
@@ -432,7 +646,12 @@ function appPage() {
               <label class="fld" style="min-width:0">Reference URL<input id="v-ref" type="text" placeholder="old / source site" spellcheck="false"></label>
               <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="v-tgt" type="text" placeholder="new / SGEN site" spellcheck="false"></label>
             </div>
-            <div class="cs-col">
+            <!-- mode / scope / max / warm-up / viewports all live in the gear now: every one of them
+                 binds to FIELDS.visual. Hidden, not deleted — runVisual() still reads these nodes. -->
+            <div class="cs-col settings-owned">
+              <div class="grp"><div class="glab">Comparison mode <span class="help" tabindex="0">?<span class="tip"><b>Comparison mode</b>The pixel diff only means something when the two sites are meant to look the SAME. <b style="display:inline">Like-for-like</b> = same design on a new platform: pixel diff on and scored. <b style="display:inline">Redesign</b> = the new site is meant to look different: pixel diff off, and the match score is structural only — what the old site had vs what the new build still has.<em>Wrong mode on a redesign = a page of differences that are all intentional.</em></span></span></div>
+                <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
+                  <select id="v-mode" style="flex:1;min-width:0;max-width:340px"><option value="like-for-like">Like-for-like replatform (pixel diff on)</option><option value="redesign">Redesign (pixel diff off — structure only)</option></select></div></div>
               <div class="grp"><div class="glab">Scope <span class="help" tabindex="0">?<span class="tip"><b>Scope</b>How many pages to compare. <b style="display:inline">Full site</b> discovers additional linked pages — useful for audits, but may surface non-canonical URLs (pagination, query variants).<em>Example: Single page for a fast homepage check.</em></span></span></div>
                 <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
                   <select id="v-scope" style="flex:1;min-width:0;max-width:340px"><option value="single">Single page (homepage)</option><option value="multiple">Multiple pages (up to max)</option><option value="sitemap">Sitemap-driven</option><option value="full">Full site</option></select>
@@ -443,11 +662,12 @@ function appPage() {
             </div>
           </div>
           <div class="vc-foot">
-            <div class="grp"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>Every comparison runs the full check — there is nothing to toggle.<em>Pixel match + structural diff at each viewport.</em></span></span></div>
+            <div class="grp settings-owned"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>The structural diff and the typography read always run. The pixel axis depends on the comparison mode — it is only meaningful when the two sites are supposed to look the same.<em>Like-for-like: pixel + structure. Redesign: structure only.</em></span></span></div>
               <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:10px 13px">
-                Each paired page is compared at every selected viewport on two axes:
-                <b style="display:inline;color:var(--ink)">pixel match</b> (visual difference %) and
-                <b style="display:inline;color:var(--ink)">structural diff</b> — elements <b style="display:inline;color:var(--ink)">missing</b>, <b style="display:inline;color:var(--ink)">extra</b>, <b style="display:inline;color:var(--ink)">moved</b>, or <b style="display:inline;color:var(--ink)">restyled</b> vs the reference. The full check always runs.</div></div>
+                Each paired page is compared at every selected viewport on the
+                <b style="display:inline;color:var(--ink)">structural diff</b> — elements <b style="display:inline;color:var(--ink)">missing</b>, <b style="display:inline;color:var(--ink)">extra</b>, <b style="display:inline;color:var(--ink)">moved</b>, or <b style="display:inline;color:var(--ink)">restyled</b> vs the reference — plus a page-level
+                <b style="display:inline;color:var(--ink)">typography read</b> (a font the old site renders that the new build never uses). Both always run.
+                <b style="display:inline;color:var(--ink)">Pixel match</b> (visual difference %) runs on <b style="display:inline;color:var(--ink)">like-for-like</b> only: on a redesign the sites are meant to differ, so it is switched off rather than reported as noise. Screenshots of both sides are captured in either mode.</div></div>
             <div class="row"><button class="run" id="v-btn" onclick="runVisual()">Run visual comparison</button><button class="run ghost" id="v-cancel" onclick="cancelScan('v')" style="display:none">Cancel</button><button class="run retry" id="v-retry" onclick="retryScan('v')" style="display:none">Retry</button></div>
           </div>
         </div></div>
@@ -460,7 +680,7 @@ function appPage() {
 
     <!-- 3 MIGRATION CERTIFICATION -->
     <section class="panel" id="p-cert">
-      <h2 class="tt">Post-Deployment Check</h2><p class="sub">Answers one question: <b>did everything make it across?</b> Inventories every page, section, image, menu and form on the source site, then verifies each one exists intact on the new build — with evidence per item and a PASS / PASS&nbsp;WITH&nbsp;MINOR&nbsp;ISSUES / FAIL verdict. Run it after deploying the rebuild, before go-live.</p>
+      <div class="tthead"><h2 class="tt">Post-Deployment Check</h2><button class="gear" id="gear-cert" onclick="openSettings('cert')" title="Post-Deployment Check settings" aria-label="Post-Deployment Check settings"><span class="gi">&#9881;</span>Settings<span class="gdot"></span></button></div><p class="sub">Answers one question: <b>did everything make it across?</b> Inventories every page, section, image, menu and form on the source site, then verifies each one exists intact on the new build — with evidence per item and a PASS / PASS&nbsp;WITH&nbsp;MINOR&nbsp;ISSUES / FAIL verdict. Run it after deploying the rebuild, before go-live.</p>
       <div class="toolgrid">
         <div class="col-left"><div class="card">
           <div class="cfg-split">
@@ -468,7 +688,9 @@ function appPage() {
               <label class="fld" style="min-width:0">Source URL<input id="c-src" type="text" placeholder="original site" spellcheck="false"></label>
               <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="c-tgt" type="text" placeholder="migrated SGEN site" spellcheck="false"></label>
             </div>
-            <div class="cs-col">
+            <!-- sitemap-only / visual stage / production validation / max pages all live in the gear
+                 now: every one binds to FIELDS.cert. Hidden, not deleted — runCert() still reads these. -->
+            <div class="cs-col settings-owned">
               <div class="grp"><div class="glab">Migration options</div><div class="opts" style="margin-top:0;flex-direction:column;align-items:flex-start;gap:11px">
                 <label><input id="c-sitemap" type="checkbox"> sitemap-only completeness <span class="help" tabindex="0">?<span class="tip"><b>Sitemap-only</b>Uses the sitemap as the authoritative page list. Recommended for migration completeness checks. Without it, a capped crawl reports completeness as <b style="display:inline">manual</b>, never authoritative.<em>Example: certify docs.sgen.com → staging against the sitemap.</em></span></span></label>
                 <label><input id="c-visual" type="checkbox"> visual comparison stage</label>
@@ -478,7 +700,7 @@ function appPage() {
             </div>
           </div>
           <div class="vc-foot">
-            <div class="grp"><div class="glab">Evidence <span class="help" tabindex="0">?<span class="tip"><b>Evidence</b>Every finding must have proof (screenshot / DOM / network). Findings without available proof are marked <b style="display:inline">Manual Verification Required</b> — never silently passed.</span></span></div>
+            <div class="grp settings-owned"><div class="glab">Evidence <span class="help" tabindex="0">?<span class="tip"><b>Evidence</b>Every finding must have proof (screenshot / DOM / network). Findings without available proof are marked <b style="display:inline">Manual Verification Required</b> — never silently passed.</span></span></div>
               <div class="hint">Findings carry inventory IDs, status, and an evidence package.</div></div>
             <div class="row"><button class="run" id="c-btn" onclick="runCert()">Run certification</button><button class="run ghost" id="c-cancel" onclick="cancelScan('c')" style="display:none">Cancel</button><button class="run retry" id="c-retry" onclick="retryScan('c')" style="display:none">Retry</button></div>
           </div>
@@ -494,7 +716,7 @@ function appPage() {
 
     <!-- 4 REPORTS -->
     <section class="panel" id="p-reports">
-      <h2 class="tt">Reports</h2><p class="sub">Review previous runs. Select one to preview its report; open the HTML or save it as a PDF to share.</p>
+      <div class="tthead"><h2 class="tt">Reports</h2><button class="gear" id="gear-reports" onclick="openSettings('reports')" title="Reports settings" aria-label="Reports settings"><span class="gi">&#9881;</span>Settings<span class="gdot"></span></button></div><p class="sub">Review previous runs. Select one to preview its report; open the HTML or save it as a PDF to share.</p>
       <div class="rgrid">
         <div class="col-left">
           <div class="rtools">
@@ -540,6 +762,26 @@ function appPage() {
     <div class="logcard">
       <div class="loghead"><b>Version log &amp; updates</b><div class="loghead-r"><button class="logdiag" onclick="genDiag()">Generate diagnostics</button><button class="logx" onclick="closeLog()" aria-label="Close">&#10005;</button></div></div>
       <div class="logbody" id="logbody"></div>
+    </div>
+  </div>
+
+  <!-- per-tool settings popup (opened from each tool's gear; one modal, re-rendered per tool) -->
+  <div id="setmodal" class="setmodal" onclick="if(event.target===this)closeSettings()" role="dialog" aria-modal="true" aria-labelledby="set-title">
+    <div class="setcard">
+      <div class="sethead">
+        <div class="sic" id="set-ic">&#9881;</div>
+        <div class="stt"><b id="set-title">Settings</b><span id="set-sub">CUSTOM TEST SETTINGS</span></div>
+        <button class="logx" onclick="closeSettings()" aria-label="Close">&#10005;</button>
+      </div>
+      <div class="setbody" id="set-body"></div>
+      <div class="setfoot">
+        <button class="bt warn" id="set-reset" onclick="resetDefaults()">Reset defaults</button>
+        <span class="set-saved" id="set-saved"></span>
+        <span class="sp"></span>
+        <button class="bt" onclick="closeSettings()">Cancel</button>
+        <button class="bt" id="set-save" onclick="saveAsDefault()">Save as default</button>
+        <button class="bt pri" id="set-apply" onclick="applySettings()">Apply</button>
+      </div>
     </div>
   </div>
 
@@ -625,16 +867,19 @@ function appPage() {
     // 1 Site Audit
     function runAudit(){var url=$('a-url').value.trim();if(!url){$('a-status').textContent='Enter a site URL.';return;}
       var vps=checked('a-vps').map(function(w){return VPMAP[w]});
-      stream('/api/run',{url:url,maxPages:+$('a-max').value||1,render:$('a-render').checked,viewports:vps,save:$('a-save').value.trim()},'a',function(m){
+      stream('/api/run',{url:url,maxPages:+$('a-max').value||1,render:$('a-render').checked,viewports:vps,save:$('a-save').value.trim(),excludeRules:SCOPE_EXCLUDED},'a',function(m){
         if(!m.ok){$('a-status').textContent='Scan failed: '+(m.error||'unknown');return;}
-        $('a-status').innerHTML='Done — '+m.verdict+' · score '+m.score+'% · pass '+m.tally.pass+' / warn '+m.tally.warn+' / fail '+m.tally.fail+' / manual '+m.tally.manual+' · saved to history';
+        var q=(m.quality!=null?' · quality '+m.quality:'');
+        // A de-scoped run must never read as a whole one, here either — not just in the report.
+        var sc=(m.scopedOut?' · <b style="color:var(--brand)">PARTIAL: quality scored on '+((m.scorableTotal||0)-m.scopedOut)+'/'+m.scorableTotal+' checks</b>':'');
+        $('a-status').innerHTML='Done — '+m.verdict+' · score '+m.score+'%'+q+' · pass '+m.tally.pass+' / warn '+m.tally.warn+' / fail '+m.tally.fail+' / manual '+m.tally.manual+' · saved to history'+sc;
         var cmp='';if(m.comparison)cmp=' · <a href="/compare/'+m.id+'" target="_blank">open comparison ↗</a>';$('a-link').innerHTML='<a href="/report/'+m.id+'" target="_blank">↗ Open full report</a>'+cmp;
         showReport('a','/report/'+m.id,'report');});}
 
     // 2 Visual Comparison
     function runVisual(){var ref=$('v-ref').value.trim(),tgt=$('v-tgt').value.trim();if(!ref||!tgt){$('v-status').textContent='Enter both Reference and Target URLs.';return;}
       var vps=checked('v-vps').map(function(w){return VPMAP[w]});
-      stream('/api/visual',{ref:ref,target:tgt,scope:$('v-scope').value,maxPages:+$('v-max').value||1,viewports:vps,axes:checked('v-ax'),warmLoads:+$('v-warm').value||3},'v',function(m){
+      stream('/api/visual',{ref:ref,target:tgt,mode:$('v-mode').value,scope:$('v-scope').value,maxPages:+$('v-max').value||1,viewports:vps,axes:checked('v-ax'),warmLoads:+$('v-warm').value||3},'v',function(m){
         if(!m.ok){$('v-status').textContent='Comparison failed: '+(m.error||'unknown');return;}
         $('v-status').innerHTML='Done — overall match '+m.overall+'% · '+m.pairs+' page(s) · '+m.viewports+' viewport(s)'+(m.sharp?'':' · (pixel diff off: sharp missing)');
         showReport('v','/visual/'+m.id,'visual report');});}
@@ -651,7 +896,7 @@ function appPage() {
 
     // 4 Reports — history list (left) + preview (right), filterable
     var R_DATA={runs:[],cases:[]},R_FILTER='all';
-    function loadReports(){fetch('/api/reports').then(function(r){return r.json()}).then(function(d){R_DATA=d;renderReports();}).catch(function(e){$('r-list').innerHTML='<div class="hint">reports error: '+e+'</div>';});}
+    function loadReports(){fetch('/api/reports?limit='+encodeURIComponent(UNBOUND.reports.limit)).then(function(r){return r.json()}).then(function(d){R_DATA=d;renderReports();}).catch(function(e){$('r-list').innerHTML='<div class="hint">reports error: '+e+'</div>';});}
     function rfilter(f){R_FILTER=f;[].forEach.call(document.querySelectorAll('#r-filters button'),function(b){b.classList.toggle('on',b.dataset.f===f)});renderReports();}
     function renderReports(){
       var el=$('r-list'),f=R_FILTER;
@@ -702,10 +947,12 @@ function appPage() {
     var TOUR=[
       {tab:'audit',target:null,lbl:'Welcome',title:'SGEN Site QA',body:"Four offline tools to check any website's quality — audit, compare, verify a migration, and review reports. Nothing leaves this machine. Let me show you around."},
       {tab:'audit',target:'.tabbar',lbl:'Navigation',title:'Four tools, one app',body:'Switch tools here — the header and these tabs stay locked in place as you scroll. Site Audit checks one site · Visual Comparison diffs old vs new · Post-Deployment Check verifies a migration · Reports holds past runs.'},
-      {tab:'audit',target:'#a-url',lbl:'Tool 1 · Site Audit',title:'Enter any site URL',body:'Point it at a live site; the scan configuration sits beside it. Everything you set — URLs, options, viewports — is saved automatically, so you never re-enter it next launch.'},
+      {tab:'audit',target:'#a-url',lbl:'Tool 1 · Site Audit',title:'Enter any site URL',body:'Point it at a live site and run it — that is the whole dashboard. How it scans (max pages, browser render, viewports, which checks score) lives behind Settings, and the URLs you type are saved automatically, so you never re-enter them next launch.'},
       {tab:'audit',target:'#a-btn',lbl:'Tool 1 · Site Audit',title:'Read the result at a glance',body:'The report opens with one clear OVERALL pass/fail up top; the other numbers are 0–100 quality reads, not separate verdicts. The summary cards are clickable — jump straight to the failing checks — and a colour key explains that red means passing.'},
       {tab:'visual',target:'#v-ref',lbl:'Tool 2 · Visual Comparison',title:'Old vs new, side by side',body:'Give a reference URL and a target URL. Every paired page is compared at each viewport on two axes: pixel match and structural diff (missing / extra / moved / restyled elements).'},
-      {tab:'visual',target:'#v-vps',lbl:'Tool 2 · Viewports',title:'Real devices, really emulated',body:'Ten current devices — Desktop, MacBook Air, iPad Air/mini, iPhone, Galaxy S — each checked against the vendor spec and emulated with real touch and pixel density, not just a narrow window. Below the line sit three framework boundary probes: width only, honestly labelled, because a layout breaks exactly on a breakpoint.'},
+      // Targets the gear, not #v-vps: the viewport chips are settings-owned (display:none) and a hidden
+      // node measures 0x0, so spotlighting it would frame nothing in the corner of the screen.
+      {tab:'visual',target:'#gear-visual',lbl:'Tool 2 · Settings',title:'Real devices, really emulated',body:'Open Settings to choose what a comparison does: like-for-like or redesign, how many pages, and the viewports. Ten current devices — Desktop, MacBook Air, iPad Air/mini, iPhone, Galaxy S — each checked against the vendor spec and emulated with real touch and pixel density, not just a narrow window. Below the line sit three framework boundary probes: width only, honestly labelled, because a layout breaks exactly on a breakpoint. Every tool has its own gear.'},
       {tab:'cert',target:'#c-src',lbl:'Tool 3 · Post-Deployment Check',title:'Did everything make it across?',body:'After a migration, this inventories every page, section, image, menu and form on the source and verifies each exists intact on the new build — with a PASS / MINOR / FAIL verdict.'},
       {tab:'reports',target:'[data-t=reports]',lbl:'Tool 4 · Reports',title:'Every run, grouped by site',body:'Past runs are grouped by site, newest first, with a search box and a date filter. Preview any run, open its HTML, or save it as a PDF to hand off. Runs stay on this machine.'},
       {tab:'audit',target:'#upd-btn',lbl:'Updates',title:'Automatic check, manual apply',body:'The app checks for updates on its own — this button turns red and a toast appears when one is ready. Click it to download, then Restart: a one-second in-app update, no installer.'},
@@ -817,33 +1064,203 @@ function appPage() {
       setInterval(autoCheck,10*60*1000);
     })();
 
-    // Persist tool settings across launches — every input/checkbox/select is saved on change and restored
-    // on load, so you don't re-set them each time. Backed by the shell's userData (window.sgenApp) with a
-    // localStorage fallback (the engine runs on a fresh random port each launch, resetting page localStorage).
+    // ================= PER-TOOL SETTINGS =========================================================
+    // A gear on each of the 4 tools opens THIS tool's settings. Three rules hold the design together:
+    //
+    //  1. ONE SOURCE OF TRUTH. Every field either BINDS to the real control the runner already reads
+    //     (a-max, a-render, a-vps, v-scope, ...) or has no DOM twin at all (scope, reports.limit).
+    //     The popup is a second VIEW of that control, never a second copy of the value — so wiring the
+    //     popup cannot desync from what /api/run actually receives. It also means the run path below
+    //     is untouched: runAudit() still reads $('a-max'), exactly as it did before this existed.
+    //  2. FACTORY IS THE AUTHORED DOM, snapshotted at parse time before any restore runs. "Reset
+    //     defaults" therefore restores what the build literally ships with — it cannot drift from the
+    //     HTML the way a hand-maintained defaults table would.
+    //  3. TWO SLOTS, NO MAGIC. Saved default (server, NOTES_DIR/settings.json) or FACTORY. Changing a
+    //     field affects this session; it persists when you click Save as default. No hidden auto-stick.
+    var TOOLS={
+      audit:{name:'Site Audit',ic:'\\u2713',sub:'CRAWL \\u00b7 RENDER \\u00b7 SCORE'},
+      visual:{name:'Visual Comparison',ic:'\\u21c4',sub:'REFERENCE vs TARGET'},
+      cert:{name:'Post-Deployment Check',ic:'\\u2605',sub:'DID EVERYTHING MAKE IT ACROSS'},
+      reports:{name:'Reports',ic:'\\u25a4',sub:'HISTORY \\u00b7 PREVIEW \\u00b7 EXPORT'}
+    };
+    // t: bool|num|sel|vps|scope · bind: the id of the live control this field is a view of.
+    var FIELDS={
+      audit:[
+        {k:'maxPages',t:'num',bind:'a-max',min:1,max:500,label:'Max pages to crawl',hint:'1 = homepage only; higher follows the sitemap + internal links up to this cap. Sent to the scan as maxPages.'},
+        {k:'render',t:'bool',bind:'a-render',label:'Browser render pass',hint:'Loads each page in a real headless browser for axe-core accessibility, Core Web Vitals, full-page screenshots and the Firefox + WebKit pass. Off = a faster static-only scan that cannot see any of those.'},
+        {k:'viewports',t:'vps',bind:'a-vps',label:'Viewports swept',hint:'The responsive sweep. Devices are really emulated (touch, pixel density, mobile UA); the boundary probes are width only. Fewer = faster.'},
+        {k:'scope',t:'scope',label:'Checks included in the score',hint:'Untick a check and the Quality score is recalculated across what is left ALONE — the excluded risk leaves the total, not just the deductions.'}
+      ],
+      visual:[
+        // Binds to #v-mode, the live select runVisual() reads — same contract as every other field
+        // here (rule 1 above). FACTORY is the authored DOM, and #v-mode's first <option> is
+        // like-for-like, so the shipped default is today's behaviour: pixel pass ON, unchanged.
+        {k:'mode',t:'sel',bind:'v-mode',label:'Comparison mode',opts:[['like-for-like','Like-for-like replatform (pixel diff on)'],['redesign','Redesign (pixel diff off — structure only)']],hint:'The pixel diff only answers a question worth asking when the two sites are supposed to look the SAME. Like-for-like = same design, new platform: the diff is on and scored. Redesign = the new site is meant to look different: the diff is switched off (it would only measure the intent) and the match score becomes structural only — what the old site had vs what the new build still has. Both sides are still screenshotted either way.'},
+        {k:'scope',t:'sel',bind:'v-scope',label:'Page scope',opts:[['single','Single page (homepage)'],['multiple','Multiple pages (up to max)'],['sitemap','Sitemap-driven'],['full','Full site']],hint:'How many pages to pair up and compare. Full site discovers additional linked pages and may surface non-canonical URLs.'},
+        {k:'maxPages',t:'num',bind:'v-max',min:1,max:200,label:'Max pages',hint:'Upper bound on paired pages for the Multiple / Sitemap / Full scopes.'},
+        {k:'warmLoads',t:'num',bind:'v-warm',min:1,max:5,label:'Warm-up loads',hint:'Load each page this many times before screenshotting so lazy-loaded / CDN-cold assets are in — fewer false diffs. 1 = no warm-up.'},
+        {k:'viewports',t:'vps',bind:'v-vps',label:'Viewports compared',hint:'Each paired page is diffed at every selected viewport on both axes (pixel match + structural).'}
+      ],
+      cert:[
+        {k:'sitemapOnly',t:'bool',bind:'c-sitemap',label:'Sitemap-only completeness',hint:'Use the sitemap as the authoritative page list. Without it a capped crawl reports completeness as manual, never authoritative.'},
+        {k:'visual',t:'bool',bind:'c-visual',label:'Run the visual comparison stage',hint:'Adds a source-vs-target visual diff to the certification pipeline. Slower.'},
+        {k:'production',t:'bool',bind:'c-prod',label:'Production validation (audit the target)',hint:'Runs a full Site Audit against the migrated target as part of the pipeline.'},
+        {k:'maxPages',t:'num',bind:'c-max',min:1,max:700,label:'Max pages',hint:'Crawl cap for both the source inventory and the target verification.'}
+      ],
+      reports:[
+        {k:'filter',t:'sel',label:'Default filter',opts:[['all','All'],['audit','Audit'],['visual','Visual'],['cert','Post-Deploy'],['case','Cases']],hint:'Which run type the Reports list opens on.'},
+        {k:'date',t:'sel',bind:'r-date',label:'Default date range',opts:[['all','Any time'],['1','Today'],['7','Last 7 days'],['30','Last 30 days']],hint:'Date filter the Reports list opens on.'},
+        {k:'limit',t:'num',min:1,max:500,label:'Runs to load',hint:'How many past runs the server returns to the Reports list, newest first. Higher = deeper history, slower list.'}
+      ]
+    };
+    var SCOPE_CAT=${JSON.stringify(SCOPE_CATALOG).replace(/</g, '\\u003c')};
+    var SCOPE_EXCLUDED=[];        // ruleIds excluded from SCORING (the checks still run + still report)
+    var UNBOUND={reports:{filter:'all',limit:60}};
+    function sEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+    function clone(o){return JSON.parse(JSON.stringify(o));}
+    function vpsOpts(bind){var c=$(bind);if(!c)return [];
+      return [].slice.call(c.querySelectorAll('label.chip')).map(function(l){var i=l.querySelector('input');return {v:i.value,label:l.textContent.trim()};});}
+    // read/write a field through its bound control — the control stays the truth
+    function fGet(tool,f){
+      if(f.t==='scope')return SCOPE_EXCLUDED.slice();
+      if(f.t==='vps'){var c=$(f.bind);if(!c)return [];return [].slice.call(c.querySelectorAll('input:checked')).map(function(i){return i.value;});}
+      if(f.bind){var el=$(f.bind);if(!el)return null;return f.t==='bool'?el.checked:(f.t==='num'?(+el.value||0):el.value);}
+      return UNBOUND[tool][f.k];
+    }
+    function fSet(tool,f,v){
+      if(f.t==='scope'){SCOPE_EXCLUDED=Array.isArray(v)?v.slice():[];return;}
+      if(f.t==='vps'){var c=$(f.bind);if(!c||!Array.isArray(v))return;
+        // Matrix-migration guard (carried over from the old form-persistence block). A saved viewport
+        // list is a set of WIDTHS and the device matrix has changed before (1200/480/430/380 retired,
+        // 1180/820/744/414/440/393/384/1280 added). Restoring a pre-change list verbatim would leave
+        // most of the new matrix unchecked — a silently shrunken sweep nobody chose and nobody sees.
+        // If the saved list names a width this build no longer ships, discard it and keep the authored
+        // matrix. A list made on the CURRENT matrix contains only known widths and restores exactly.
+        var ins=[].slice.call(c.querySelectorAll('input')),known={};
+        ins.forEach(function(i){known[i.value]=1;});
+        if(v.some(function(x){return !known[x];}))return;
+        ins.forEach(function(i){i.checked=v.indexOf(i.value)>=0;});return;}
+      if(f.bind){var el=$(f.bind);if(!el)return;if(f.t==='bool')el.checked=!!v;else el.value=v;return;}
+      UNBOUND[tool][f.k]=v;
+    }
+    function readTool(tool){var o={};FIELDS[tool].forEach(function(f){o[f.k]=fGet(tool,f);});return o;}
+    function writeTool(tool,vals){FIELDS[tool].forEach(function(f){if(vals&&vals[f.k]!=null)fSet(tool,f,vals[f.k]);});}
+    // FACTORY = the authored DOM, snapshotted NOW (parse time) before anything restores over it.
+    var FACTORY={};Object.keys(FIELDS).forEach(function(t){FACTORY[t]=readTool(t);});
+    var SAVED={},curTool='audit',DRAFT={};
+    function isCustom(tool){return JSON.stringify(readTool(tool))!==JSON.stringify(FACTORY[tool]);}
+    function paintGears(){Object.keys(TOOLS).forEach(function(t){var g=$('gear-'+t);if(g)g.classList.toggle('custom',isCustom(t));});}
+    function openSettings(tool){
+      curTool=tool;DRAFT=clone(readTool(tool));
+      $('set-ic').innerHTML=TOOLS[tool].ic;$('set-title').textContent=TOOLS[tool].name+' \\u2014 settings';
+      $('set-sub').textContent=TOOLS[tool].sub+' \\u00b7 CUSTOM TEST SETTINGS';
+      $('set-saved').textContent='';renderModal();$('setmodal').classList.add('on');
+    }
+    function closeSettings(){$('setmodal').classList.remove('on');}
+    function renderModal(){
+      $('set-body').innerHTML=FIELDS[curTool].map(function(f){
+        if(f.t==='scope')return '<div class="opt col"><div class="otx"><b>'+sEsc(f.label)+'</b><span>'+sEsc(f.hint)+'</span></div><div id="sc-host"></div></div>';
+        if(f.t==='vps')return '<div class="opt col"><div class="otx"><b>'+sEsc(f.label)+'</b><span>'+sEsc(f.hint)+'</span></div><div class="chips" id="vp-host-'+f.k+'">'+
+          vpsOpts(f.bind).map(function(o){return '<label class="chip"><input type="checkbox" value="'+sEsc(o.v)+'"'+(DRAFT[f.k].indexOf(o.v)>=0?' checked':'')+' onchange="setVps(\\''+f.k+'\\')">'+sEsc(o.label)+'</label>';}).join('')+'</div></div>';
+        var ctl='';
+        if(f.t==='bool')ctl='<label class="sw"><input type="checkbox"'+(DRAFT[f.k]?' checked':'')+' onchange="setF(\\''+f.k+'\\',this.checked)" aria-label="'+sEsc(f.label)+'"><i></i></label>';
+        if(f.t==='num')ctl='<input type="number" value="'+sEsc(DRAFT[f.k])+'" min="'+f.min+'" max="'+f.max+'" onchange="setF(\\''+f.k+'\\',+this.value)" aria-label="'+sEsc(f.label)+'">';
+        if(f.t==='sel')ctl='<select onchange="setF(\\''+f.k+'\\',this.value)" aria-label="'+sEsc(f.label)+'">'+f.opts.map(function(o){return '<option value="'+sEsc(o[0])+'"'+(String(DRAFT[f.k])===o[0]?' selected':'')+'>'+sEsc(o[1])+'</option>';}).join('')+'</select>';
+        return '<div class="opt"><div class="otx"><b>'+sEsc(f.label)+'</b><span>'+sEsc(f.hint)+'</span></div><div class="octl">'+ctl+'</div></div>';
+      }).join('');
+      if(FIELDS[curTool].some(function(f){return f.t==='scope';}))renderScope();
+    }
+    function setF(k,v){DRAFT[k]=v;}
+    function setVps(k){var h=$('vp-host-'+k);DRAFT[k]=[].slice.call(h.querySelectorAll('input:checked')).map(function(i){return i.value;});}
+    // ---- scope tree: suites that expand to their individual checks ----
+    function scRules(sk){return SCOPE_CAT.rules.filter(function(r){return r.suite===sk;});}
+    function scOn(id){return DRAFT.scope.indexOf(id)<0;}
+    function renderScope(){
+      var h='<div class="sc-tools"><button class="bt" onclick="scAll(true)">Include all</button><button class="bt" onclick="scAll(false)">Exclude all</button><span class="sc-count" id="sc-count"></span></div><div class="sctree">';
+      SCOPE_CAT.suites.forEach(function(s){
+        var rs=scRules(s.key),on=rs.filter(function(r){return scOn(r.id);}).length;
+        h+='<div class="scs" data-k="'+sEsc(s.key)+'"><div class="scs-h" onclick="scTog(event,\\''+s.key+'\\')">'+
+          '<input type="checkbox" onclick="event.stopPropagation()" onchange="scSuite(\\''+s.key+'\\',this.checked)" aria-label="'+sEsc(s.name)+'"'+(on===rs.length?' checked':'')+'>'+
+          '<span class="nm">'+sEsc(s.name)+'</span><span class="mt" id="sc-m-'+sEsc(s.key)+'">'+on+'/'+rs.length+' \\u00b7 weight '+s.weight+'</span><span class="cv">\\u25b8</span></div><div class="scs-b">'+
+          rs.map(function(r){return '<div class="scr'+(scOn(r.id)?'':' off')+'" id="sc-r-'+sEsc(r.id)+'"><input type="checkbox"'+(scOn(r.id)?' checked':'')+' onchange="scRule(\\''+r.id+'\\',this.checked)" aria-label="'+sEsc(r.id)+'"><span class="rid">'+sEsc(r.id)+'</span><span class="rt" title="'+sEsc(r.title)+'">'+sEsc(r.title)+'</span><span class="rd">\\u2212'+r.ded+'</span></div>';}).join('')+
+          '</div></div>';
+      });
+      h+='</div><div class="sc-note"><b>How this changes the number.</b> A section\\u2019s score is the share of its known risk that is resolved. Excluding a check removes its risk from the total <b>and</b> from the deductions \\u2014 so excluding a failing check raises the score, excluding a passing one lowers it, and a fully excluded section drops out of the weighted average instead of scoring 100. '+SCOPE_CAT.manualCount+' manual checks are not listed: they carry no deduction and can never move the score.</div>'+
+        '<div class="sc-warn" id="sc-warn" style="display:none"></div>';
+      $('sc-host').innerHTML=h;scPaint();
+    }
+    function scPaint(){
+      var tot=SCOPE_CAT.rules.length,out=DRAFT.scope.length,on=tot-out;
+      var c=$('sc-count');c.innerHTML='scoring on <b>'+on+'</b> / '+tot+' checks';c.classList.toggle('part',out>0);
+      SCOPE_CAT.suites.forEach(function(s){
+        var rs=scRules(s.key),k=rs.filter(function(r){return scOn(r.id);}).length;
+        var m=$('sc-m-'+s.key);if(m)m.textContent=k+'/'+rs.length+' \\u00b7 weight '+s.weight;
+        var box=document.querySelector('.scs[data-k="'+s.key+'"] .scs-h input');
+        if(box){box.checked=k===rs.length;box.indeterminate=k>0&&k<rs.length;}
+      });
+      var w=$('sc-warn');
+      if(!w)return;
+      if(out>0){w.style.display='';w.innerHTML='<b>\\u26a0 Partial audit.</b> '+out+' of '+tot+' checks ('+Math.round(out/tot*100)+'%) will be left out of the Quality score. The run still performs every check and the report still lists them \\u2014 and the report will carry a disclosure notice above the score. The pass/fail verdict and launch-readiness gate stay whole-site, so de-scoping cannot buy a pass.';}
+      else w.style.display='none';
+    }
+    function scTog(e,k){if(e.target.tagName==='INPUT')return;document.querySelector('.scs[data-k="'+k+'"]').classList.toggle('open');}
+    function scSet(id,on){var i=DRAFT.scope.indexOf(id);if(on&&i>=0)DRAFT.scope.splice(i,1);if(!on&&i<0)DRAFT.scope.push(id);
+      var row=$('sc-r-'+id);if(row){row.classList.toggle('off',!on);var b=row.querySelector('input');if(b)b.checked=on;}}
+    function scRule(id,on){scSet(id,on);scPaint();}
+    function scSuite(k,on){scRules(k).forEach(function(r){scSet(r.id,on);});scPaint();}
+    function scAll(on){SCOPE_CAT.rules.forEach(function(r){scSet(r.id,on);});scPaint();}
+    // ---- apply / save / reset ----
+    var AFTER={reports:function(){rfilter(UNBOUND.reports.filter);loadReports();}};
+    function applySettings(after){
+      writeTool(curTool,DRAFT);
+      if(AFTER[curTool])AFTER[curTool]();
+      paintGears();
+      if(after!=='keep')closeSettings();
+    }
+    function saveAsDefault(){
+      applySettings('keep');
+      fetch('/api/settings',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tool:curTool,values:DRAFT})})
+        .then(function(r){return r.json();}).then(function(d){
+          if(!d||!d.ok)throw new Error((d&&d.error)||'save failed');
+          SAVED=d.tools||{};$('set-saved').textContent='\\u2713 saved as default';
+        }).catch(function(e){$('set-saved').textContent='\\u2715 '+e;});
+    }
+    function resetDefaults(){
+      DRAFT=clone(FACTORY[curTool]);
+      writeTool(curTool,DRAFT);
+      if(AFTER[curTool])AFTER[curTool]();
+      renderModal();paintGears();
+      fetch('/api/settings',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tool:curTool,reset:1})})
+        .then(function(r){return r.json();}).then(function(d){
+          if(!d||!d.ok)throw new Error((d&&d.error)||'reset failed');
+          SAVED=d.tools||{};$('set-saved').textContent='\\u2713 reset to factory defaults';
+        }).catch(function(e){$('set-saved').textContent='\\u2715 '+e;});
+    }
+    // Restore saved defaults on boot. Runs before the URL-persistence block below; the two touch
+    // disjoint controls (settings here, per-run URL/name text there), so their order does not matter.
+    fetch('/api/settings').then(function(r){return r.json();}).then(function(d){
+      SAVED=(d&&d.tools)||{};
+      Object.keys(FIELDS).forEach(function(t){if(SAVED[t])writeTool(t,SAVED[t]);});
+      if(SAVED.reports)AFTER.reports();
+      paintGears();
+    }).catch(function(){});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeSettings();});
+
+    // Per-RUN inputs (the URLs you type and the save-as name) still stick automatically across
+    // launches — those are not settings and have no popup. Everything that IS a setting moved to the
+    // per-tool popup above and persists server-side via Save as default, so it is no longer mirrored
+    // here: two writers for one control is how a saved value silently loses a race on load.
     (function(){
       var KEY='sgenqa_form_v1';
-      var IDS=['a-url','a-max','a-render','a-save','v-ref','v-tgt','v-scope','v-max','v-warm','c-src','c-tgt','c-sitemap','c-visual','c-prod','c-max'];
-      var GROUPS=['v-vps','v-ax','a-vps'];   // checkbox groups, keyed by container id
+      var IDS=['a-url','a-save','v-ref','v-tgt','c-src','c-tgt'];
       function lsGet(){try{return JSON.parse(localStorage.getItem(KEY)||'{}');}catch(e){return {};}}
       function load(cb){ if(window.sgenApp&&sgenApp.getFlag){sgenApp.getFlag(KEY).then(function(v){cb(v?JSON.parse(v):lsGet());}).catch(function(){cb(lsGet());});} else cb(lsGet()); }
       function store(s){var j=JSON.stringify(s);if(window.sgenApp&&sgenApp.setFlag){try{sgenApp.setFlag(KEY,j);}catch(e){}}try{localStorage.setItem(KEY,j);}catch(e){}}
       var st={};
-      function snapshot(){IDS.forEach(function(id){var el=$(id);if(!el)return;st[id]=el.type==='checkbox'?el.checked:el.value;});GROUPS.forEach(function(g){var c=$(g);if(!c)return;st[g]=[].slice.call(c.querySelectorAll('input:checked')).map(function(i){return i.value;});});store(st);}
+      function snapshot(){IDS.forEach(function(id){var el=$(id);if(!el)return;st[id]=el.type==='checkbox'?el.checked:el.value;});store(st);}
       load(function(saved){ st=saved||{};
         IDS.forEach(function(id){var el=$(id);if(!el||st[id]==null)return;if(el.type==='checkbox')el.checked=!!st[id];else el.value=st[id];});
-        // Matrix-migration guard. A saved viewport selection is a list of WIDTHS, and the device matrix
-        // changed (1200/480/430/380 retired; 1180/820/744/414/440/393/384/1280 added). Restoring an old
-        // selection verbatim would leave most of the new matrix unchecked — a silently shrunken sweep the
-        // user never chose, and never sees. So: if a saved group names any value this build no longer
-        // ships, it predates the current matrix — discard it and keep the authored defaults (all on).
-        // A selection made on the CURRENT matrix contains only known values and restores exactly as before.
-        GROUPS.forEach(function(g){var c=$(g);if(!c||!st[g])return;
-          var ins=[].slice.call(c.querySelectorAll('input')),known={};
-          ins.forEach(function(i){known[i.value]=1;});
-          if(st[g].some(function(v){return !known[v];}))return;
-          ins.forEach(function(i){i.checked=st[g].indexOf(i.value)>=0;});});
         IDS.forEach(function(id){var el=$(id);if(el)el.addEventListener('change',snapshot);});
-        GROUPS.forEach(function(g){var c=$(g);if(c)c.querySelectorAll('input').forEach(function(i){i.addEventListener('change',snapshot);});});
       });
     })();
   </script></body></html>`;
@@ -1147,8 +1564,34 @@ async function apiInspect(req, res) {
   }
 }
 
+// ---- per-tool settings API -----------------------------------------------------------------------
+// POST /api/settings  { tool, values }  -> save that tool's defaults   ("Save as default")
+// POST /api/settings  { tool, reset:1 } -> drop that tool's slot        ("Reset defaults" -> FACTORY)
+// Only the 4 known tool keys are writable, and the payload is size-capped: this file is read back on
+// every page load, so an unbounded POST would be a self-inflicted DoS on the app's own boot path.
+function apiSettings(req, res, body) {
+  let o; try { o = JSON.parse(body || '{}'); } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad json' })); }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad body' }));
+  const tool = String(o.tool || '');
+  if (!TOOL_KEYS.includes(tool)) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'unknown tool' }));
+  const s = readSettings();
+  if (o.reset) { delete s.tools[tool]; }
+  else {
+    const v = o.values;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad values' }));
+    const json = JSON.stringify(v);
+    if (json.length > 65536) return send(res, 413, 'application/json', JSON.stringify({ ok: false, error: 'settings too large' }));
+    s.tools[tool] = v;
+  }
+  if (!writeSettings(s)) return send(res, 500, 'application/json', JSON.stringify({ ok: false, error: 'could not write ' + SETTINGS_FILE }));
+  return send(res, 200, 'application/json', JSON.stringify({ ok: true, tools: readSettings().tools, file: SETTINGS_FILE }));
+}
+
 // ---- report history listing ---------------------------------------------------------------------
-function listRuns() {
+// `limit` is the Reports tool's "runs to list" setting (default 60 — the historical hardcoded cap, so
+// an absent/!finite value behaves exactly as before). Clamped: the list is rendered in one pass.
+function listRuns(limit) {
+  const cap = Number.isFinite(+limit) && +limit >= 1 ? Math.min(500, Math.floor(+limit)) : 60;
   if (!fs.existsSync(RUNS)) return [];
   return fs.readdirSync(RUNS).filter(d => !d.startsWith('_') && (() => { try { return fs.statSync(path.join(RUNS, d)).isDirectory(); } catch (_) { return false; } })()).map(id => {
     const dir = path.join(RUNS, id);
@@ -1158,7 +1601,7 @@ function listRuns() {
     let when = ''; try { when = new Date(fs.statSync(dir).mtimeMs).toISOString().replace('T', ' ').slice(0, 16); } catch (_) {}
     const host = id.replace(/-(vis|cert)-\d+$/, '').replace(/-\d{10,}$/, '');
     return { id, kind, host, when, json, mtime: (() => { try { return fs.statSync(dir).mtimeMs; } catch (_) { return 0; } })() };
-  }).sort((a, b) => b.mtime - a.mtime).slice(0, 60);
+  }).sort((a, b) => b.mtime - a.mtime).slice(0, cap);
 }
 
 // ---- server -------------------------------------------------------------------------------------
@@ -1172,9 +1615,11 @@ const server = http.createServer(async (req, res) => {
     const p = u.pathname;
     if (req.method === 'GET' && p === '/') return send(res, 200, 'text/html; charset=utf-8', appPage());
     if (req.method === 'GET' && p === '/api/baselines') return send(res, 200, 'application/json', JSON.stringify({ baselines: listBaselines() }));
-    if (req.method === 'GET' && p === '/api/reports') { let cases = []; try { cases = loadCases(path.join(DATA, 'portfolio.jsonl')); } catch (_) {} return send(res, 200, 'application/json', JSON.stringify({ runs: listRuns(), cases })); }
+    if (req.method === 'GET' && p === '/api/reports') { let cases = []; try { cases = loadCases(path.join(DATA, 'portfolio.jsonl')); } catch (_) {} return send(res, 200, 'application/json', JSON.stringify({ runs: listRuns(u.searchParams.get('limit')), cases })); }
     if (req.method === 'GET' && p === '/api/status') return send(res, 200, 'application/json', JSON.stringify({ busy: ACTIVE_SCANS > 0, active: ACTIVE_SCANS }));
     if (req.method === 'GET' && p === '/api/notes') return send(res, 200, 'application/json', JSON.stringify({ current: SELF_VER, changelog: CHANGELOG, history: readHistory() }));
+    if (req.method === 'GET' && p === '/api/settings') return send(res, 200, 'application/json', JSON.stringify({ ok: true, tools: readSettings().tools, file: SETTINGS_FILE }));
+    if (req.method === 'POST' && p === '/api/settings') return apiSettings(req, res, await readBody(req));
     if (req.method === 'GET' && p === '/api/feed-version') return send(res, 200, 'application/json', JSON.stringify({ version: FEED_VERSION, current: SELF_VER }));
     if (req.method === 'GET' && p === '/manual') return send(res, 200, 'text/html; charset=utf-8', MANUAL_HTML || '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:44px;color:#333">The user manual is not available in this build.</body>');
     if (req.method === 'GET' && p === '/api/diagnostics') { const md = buildDiagnostics(); const fn = 'sgen-site-qa-diagnostics-' + (SELF_VER || 'base') + '-' + new Date().toISOString().slice(0, 10) + '.md'; return send(res, 200, 'application/json', JSON.stringify({ markdown: md, filename: fn })); }
@@ -1243,11 +1688,35 @@ async function apiRun(req, res) {
         ? renderComparePanel(diff(prior.data, data), { priorCount: prior.count })
         : renderComparePanel(null);
     } catch (e) { comparePanel = ''; }
-    renderReport(data, outDir, { comparePanel }); recordScan(data);
+    // ---- SCOPE: score the operator's selected checks alone -------------------------------------
+    // The engine ALWAYS runs every check — scope is a scoring decision, not a skipping one, so the
+    // findings, evidence, tallies and launch gate below stay whole-site and a de-scoped check is
+    // still visible in the report. Only `quality` is re-derived, with the excluded rules leaving the
+    // numerator AND the denominator together (see score.js). Ids are filtered against the registry
+    // first, so a stale/junk id from an older settings file cannot silently distort the denominator.
+    const excludeRules = (Array.isArray(opts.excludeRules) ? opts.excludeRules : [])
+      .filter((id) => typeof id === 'string' && SCOPE_RULE_IDS.has(id));
+    let scopePanel = '';
+    if (excludeRules.length) {
+      data.quality = computeQuality(data.suites, { excludeRules });
+      const facts = scopeFacts(data, excludeRules);
+      scopePanel = buildScopePanel(facts);
+      // Recorded in report.json so the de-scoping is auditable after the fact, not just visible.
+      data.scope = {
+        excludedRules: facts.excluded, scoredOf: facts.total - facts.excluded.length, scorableTotal: facts.total,
+        openDefectsExcluded: facts.openHidden, launchBlockersExcluded: facts.blockersHidden,
+        suitesFullyExcluded: facts.fullyOut.map((s) => s.key),
+        note: 'Quality score covers the selected checks only. Verdict, tally, checks-passing score and launch readiness remain whole-site.',
+      };
+    }
+    // recordScan() stores verdict/score/tally/suite ROWS — none of which scope touches — so a partial
+    // run cannot poison the per-host history or the "vs previous scan" diff with an inflated number.
+    renderReport(data, outDir, { comparePanel, scopePanel }); recordScan(data);
     let comparison = false, cmp = null;
     if (opts.save) saveBaseline(data, opts.save);
     if (opts.baseline) { try { const base = loadResult(opts.baseline); base.data._label = opts.baseline; data._label = 'current'; const d = diff(base.data, data); renderCompare(d, outDir); comparison = true; cmp = d.counts; } catch (e) {} }
-    emit({ t: 'done', ok: true, id, verdict: data.verdict, score: data.score, tally: data.tally, comparison, cmp }); res.end();
+    emit({ t: 'done', ok: true, id, verdict: data.verdict, score: data.score, tally: data.tally, comparison, cmp,
+      quality: data.quality ? data.quality.overall : null, scopedOut: excludeRules.length || 0, scorableTotal: SCOPE_CATALOG.rules.length }); res.end();
   } catch (e) { if (!aborted) emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
 }
 
@@ -1267,10 +1736,12 @@ async function apiVisual(req, res) {
   let aborted = false; const onClose = () => { aborted = true; }; req.on('close', onClose); res.on('close', onClose);
   try {
     emit({ t: 'p', pct: 6, phase: 'discovering + rendering pages' });
-    const data = await visualMatch.run(ref, tgt, { maxPages, outDir, viewports: vps, axes: o.axes, warmLoads: o.warmLoads, log: () => {}, progress: (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct: Math.max(6, Math.min(96, pct || 0)), phase: phase || 'comparing' }); } });
+    // mode is normalized inside visualMatch.run (unknown → like-for-like), so a hand-rolled POST
+    // cannot smuggle a third mode past the engine — no second copy of that rule lives here.
+    const data = await visualMatch.run(ref, tgt, { maxPages, outDir, viewports: vps, axes: o.axes, warmLoads: o.warmLoads, mode: o.mode, log: () => {}, progress: (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct: Math.max(6, Math.min(96, pct || 0)), phase: phase || 'comparing' }); } });
     emit({ t: 'p', pct: 98, phase: 'writing report' });
     renderVisual(data, outDir);
-    emit({ t: 'done', ok: true, id, overall: data.overall, pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp }); res.end();
+    emit({ t: 'done', ok: true, id, overall: data.overall, pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp, mode: data.mode }); res.end();
   } catch (e) { if (!aborted) emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
 }
 
