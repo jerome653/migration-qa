@@ -606,9 +606,17 @@ function appPage() {
         var n=0,iv=setInterval(function(){fit();if(++n>48)clearInterval(iv);},250);
       });
     }
+    // Every tool's result carries its own actions. Save-as-PDF on all of them; the annotate lane on
+    // visual runs. These previously existed ONLY in the Reports tab, so after running a comparison in
+    // tool 2 you had to leave, find your own run in a list, and click through — the tool that PRODUCES
+    // the artifact never offered to mark it up. Keyed off the route, not the tool prefix, so it stays
+    // correct wherever showReport is called from.
     function showReport(pre,route,label){
       var ph=$(pre+'-ph'); if(ph)ph.style.display='none';
-      $(pre+'-link').innerHTML='<a href="'+route+'" target="_blank">↗ Open '+label+' in a new tab</a>';
+      var ann=route.indexOf('/visual/')===0
+        ? ' &nbsp; <a href="/annotate/'+route.slice(8)+'" target="_blank">✎ Annotate &amp; export PDF</a>' : '';
+      $(pre+'-link').innerHTML='<a href="'+route+'" target="_blank">↗ Open '+label+' in a new tab</a>'
+        +' &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a>'+ann;
       var f=document.createElement('iframe');f.scrolling='no';autosize(f);f.src=route;
       $(pre+'-frame').appendChild(f);
     }
