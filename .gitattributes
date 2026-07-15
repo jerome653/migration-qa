@@ -1,0 +1,44 @@
+# Line-ending policy. Without this, whether a file looks "changed" depends on the cloner's
+# core.autocrlf setting rather than on its content: a CRLF working tree diffed against LF blobs
+# makes byte-identical files look modified. During the 2.5.13 -> 3.0.0 reconciliation this turned
+# 14 real changes into a ~149-file phantom diff (136 of 148 lib files were byte-identical), a 10x
+# over-report. Normalise here so the repo is the authority, not the machine.
+
+# Auto-detect text and store it LF-normalised in the repo.
+* text=auto
+
+# Be explicit for the types we actually ship (LF in the repo, native in the working tree).
+*.js     text
+*.json   text
+*.md     text
+*.html   text
+*.css    text
+*.txt    text
+*.yml    text
+*.yaml   text
+.gitignore      text
+.gitattributes  text
+
+# Windows scripts: keep CRLF in the working tree (still LF in the repo).
+*.ps1    text eol=crlf
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+
+# POSIX scripts must stay LF or they will not execute.
+*.sh     text eol=lf
+
+# Binary: never diff, never munge line endings. None are tracked today; these are guard rails
+# for evidence/screenshot assets that this engine is likely to start carrying.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.ico    binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.eot    binary

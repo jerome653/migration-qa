@@ -52,7 +52,14 @@ async function main() {
     const poll = () => {
       http.get('http://127.0.0.1:' + PORT + '/', (res) => {
         let b = ''; res.on('data', d => b += d); res.on('end', () => {
-          const tabs = ['Site Audit', 'Visual Comparison', 'Migration Certification', 'Reports'].every(s => b.includes(s));
+          // Tab 3 is 'Post-Deployment Check' (renamed from 'Migration Certification' in 2.5.x).
+          // A case-sensitive 'Migration Certification' test here matched nothing on 2.5.x, so this
+          // check failed on a perfectly healthy engine — which made `sgen update` report failure and
+          // advise rollback on EVERY update. Match case-insensitively and accept either name, so the
+          // test still holds if the CLI and the engine tree are at different versions.
+          const body = String(b).toLowerCase();
+          const tabs = ['site audit', 'visual comparison', 'reports'].every(s => body.includes(s))
+            && ['post-deployment check', 'migration certification'].some(s => body.includes(s));
           res.statusCode === 200 && tabs ? ok('qa-serve boots + serves 4 tools (:' + PORT + ')') : bad('qa-serve served but incomplete');
           http.get('http://127.0.0.1:' + PORT + '/api/reports', (r2) => { r2.statusCode === 200 ? ok('/api/reports responds 200') : bad('/api/reports ' + r2.statusCode); r2.resume(); srv.kill(); resolve(); })
             .on('error', () => { bad('/api/reports unreachable'); srv.kill(); resolve(); });

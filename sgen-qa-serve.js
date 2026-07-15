@@ -11,22 +11,25 @@
 //   sgen qa-serve [--port 7878] [--open]
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { runAudit } = require('./lib/site-qa/audit');
 const { renderReport, STYLE } = require('./lib/site-qa/report');
-const { saveBaseline, loadResult, diff, listBaselines, recordScan } = require('./lib/site-qa/compare');
-const { renderCompare } = require('./lib/site-qa/report-compare');
+const { saveBaseline, loadResult, diff, listBaselines, recordScan, loadLatestRecord } = require('./lib/site-qa/compare');
+const { renderCompare, renderComparePanel } = require('./lib/site-qa/report-compare');
 const { discoverPages } = require('./lib/migration-qa/crawl');
 const visualMatch = require('./lib/site-qa/visual-match');
 const { render: renderVisual } = require('./lib/site-qa/report-visual');
+const annotate = require('./lib/site-qa/annotate');
+const { render: renderAnnotate } = require('./lib/site-qa/report-annotate');
 const { certifyMigration } = require('./lib/site-qa/inventory/certify-pipeline');
 const { IdRegistry } = require('./lib/site-qa/inventory/id-registry');
 let loadCases; try { ({ loadCases } = require('./lib/site-qa/inventory/portfolio')); } catch (e) { loadCases = () => []; }
 
 function arg(name, def) { const i = process.argv.indexOf('--' + name); return i >= 0 ? (process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : true) : def; }
-const PORT = parseInt(arg('port', '7878'), 10);
+const PORT = parseInt(arg('port', process.env.SGEN_QA_PORT || '7878'), 10);
 const RUNS = path.resolve(__dirname, '..', 'sgen', 'W5-Live-Surface-Audit', 'site-qa', '_ui-runs');
 const DATA = path.resolve(__dirname, '..', 'sgen', 'W5-Live-Surface-Audit', 'site-qa', '_auditor-data');
 const safe = (s) => String(s).replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 60);
@@ -34,6 +37,157 @@ const H = (u) => { try { return new URL(u).host; } catch (_) { return u; } };
 const norm = (u) => { u = String(u || '').trim(); if (u && !/^https?:\/\//i.test(u)) u = 'https://' + u; return u; };
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.gif': 'image/gif', '.json': 'application/json', '.css': 'text/css', '.html': 'text/html; charset=utf-8' };
 const gitCommit = (() => { try { return require('child_process').execSync('git rev-parse --short HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch (_) { return 'unknown'; } })();
+// The user manual (self-contained HTML) — bundled in lib/, served at /manual, opened from the Manual button.
+let MANUAL_HTML = ''; try { MANUAL_HTML = fs.readFileSync(path.join(__dirname, 'lib', 'manual.html'), 'utf8'); } catch (_) {}
+
+// ---- version log: release notes + this machine's update history ----------------------------------
+// A hot engine is extracted to userData/engines/<version>/, so our own version == this directory's name.
+// The literal below is the fallback used only when this dir is NOT named like a version (dev checkout).
+// BUMP IT EVERY RELEASE — it has already gone stale twice. Keep in sync with package.json "version"
+// and lib/site-qa/release-metadata.json packageVersion.
+const SELF_VER = (path.basename(__dirname).match(/^\d+\.\d+\.\d+$/) || ['3.0.0'])[0];
+const NOTES_DIR = path.join(process.env.APPDATA || process.env.HOME || __dirname, 'SGEN Site QA');
+const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
+// Newest first. Each shipped engine carries its own notes; older entries are kept for the in-app log.
+const CHANGELOG = [
+  { version: '2.5.13', date: '2026-07-14', notes: [
+    'Audit criteria re-prioritization: fewer false launch-blockers, real security risks now gate. Bundles 2.5.11 developer-centric element context + 2.5.12 one-click Inspect.'
+  ] },
+  { version: '2.5.12', date: '2026-07-14', notes: [
+    'Inspect: open any element issue in a live browser with the exact element highlighted (fingerprint→selector→xpath→signature fallback). In-app only.'
+  ] },
+  { version: '2.5.11', date: '2026-07-14', notes: [
+    'Developer-centric report: every element issue now shows its exact DOM location (outerHTML, DOM path, XPath, classes, attributes, element box, ranked selectors) in the report + copy-ticket.'
+  ] },
+  { version: '2.5.4', date: '2026-07-10', notes: [
+    'Cleaner look — scrollbars are now hidden throughout the app and reports (scrolling still works normally).'
+  ] },
+  { version: '2.5.3', date: '2026-07-10', notes: [
+    'The in-app user manual now uses the dark SGEN theme, with a cleaner scroll-free look.'
+  ] },
+  { version: '2.5.2', date: '2026-07-10', notes: [
+    'Added a Manual button (between Logs and Help) that opens the full user guide right in the app.'
+  ] },
+  { version: '2.5.1', date: '2026-07-10', notes: [
+    'Walkthrough polish: the coach-mark popup (and its Next/Finish button) now always stays fully on screen.',
+    'Verified for release — 24 test suites + stress pass.'
+  ] },
+  { version: '2.5.0', date: '2026-07-10', notes: [
+    'Refreshed the ? Help walkthrough to cover everything new — saved settings, the pass/fail result, clickable summary cards, grouped Reports, in-app updates, and the Logs + diagnostics window.'
+  ] },
+  { version: '2.4.9', date: '2026-07-10', notes: [
+    'Your tool settings now stick — inputs, checkboxes, viewports and options are saved and restored automatically, so you do not re-set them each time.',
+    'Site Audit: the URL box is narrower with the scan configuration on one row beside it.',
+    'Visual Comparison + Post-Deployment Check: cleaner two-column layout — URLs on the left, options on the right, the run button beside the summary.',
+    'Reports: grouped by site (newest first) with a search box and a date filter.',
+    'Logs window: "Generate diagnostics" produces a detailed Markdown report you can download or copy to send for review.'
+  ] },
+  { version: '2.4.8', date: '2026-07-10', notes: [
+    'Clearer report: the overall PASS/FAIL verdict is now labelled distinctly from the 0–100 quality scores (Inspector lenses + Quality dashboard), so it is obvious at a glance whether the site passes.'
+  ] },
+  { version: '2.4.7', date: '2026-07-10', notes: [
+    'The score-summary cards (Passed / Warnings / Failed / Manual / Pages / Rendered) are now clickable — jump straight to those checks.',
+    'Added a colour key on the report explaining what red / grey / silver mean.'
+  ] },
+  { version: '2.4.6', date: '2026-07-10', notes: [
+    'Auto-check for updates: the button turns red and a toast appears when one is available — download + install stay a manual click.',
+    'The header and tool tabs now stay locked in place while you scroll.',
+    'Evidence screenshots trim the empty space at the bottom of tall pages.',
+    'Cleaned the address stamp out of the header.'
+  ] },
+  { version: '2.4.4', date: '2026-07-10', notes: [
+    'New: this Logs panel (beside Help) — shows what each update changed and your update history.',
+    'Tools 2-4 (Visual Comparison, Post-Deployment Check, Reports) now use the full width — single column, no empty sidebar.'
+  ] },
+  { version: '2.4.2', date: '2026-07-10', notes: [
+    'Fixed: in-app updates now apply reliably and are fully manual — nothing installs unless you click.',
+    'An update is a ~360 KB download + a 1-second restart. No installer, no "cannot be closed".'
+  ] },
+  { version: '2.4.0', date: '2026-07-10', notes: [
+    'Re-architected updates: the engine updates itself in place instead of a full app reinstall.'
+  ] },
+  { version: '2.3.5', date: '2026-07-10', notes: [
+    'Clearer Visual Comparison reports: grouped moves, plain-language labels, per-issue Copy-as-Markdown dev tickets.',
+    'Age-gate / cookie-banner bypass across all tools so audits proceed to the real page.'
+  ] },
+  { version: '2.3.0', date: '2026-07-10', notes: [
+    '10 device viewports with model labels (added 1200 / 480 / 430 / 380).'
+  ] },
+  { version: '2.2.0', date: '2026-07-09', notes: [
+    'Windows installer + Add/Remove Programs, scan cancel/retry, SGEN red theme, single-row tool tabs.'
+  ] }
+];
+function readHistory() { try { const h = JSON.parse(fs.readFileSync(UPDATE_LOG, 'utf8')); return Array.isArray(h) ? h : []; } catch (_) { return []; } }
+function recordVersion() {   // append only when the running version changes (an update landing), not every launch
+  if (!SELF_VER) return readHistory();
+  const h = readHistory(); const last = h[h.length - 1];
+  if (!last || last.version !== SELF_VER) {
+    h.push({ version: SELF_VER, at: new Date().toISOString() });
+    try { fs.mkdirSync(NOTES_DIR, { recursive: true }); fs.writeFileSync(UPDATE_LOG, JSON.stringify(h.slice(-60))); } catch (_) {}
+  }
+  return h;
+}
+
+// Auto-check (DETECT ONLY — never downloads): poll the engine feed's version.txt in the background and
+// cache the latest. The UI compares it to the running app version and reddens the button + toasts when a
+// newer one exists; the actual download + install stays a manual click through the shell.
+const FEED_VERSION_URL = 'https://github.com/jerome653/migration-qa/releases/download/engine-latest/version.txt';
+let FEED_VERSION = null;
+function fetchFeedVersion() {
+  return new Promise((resolve) => {
+    (function go(u, n) {
+      if (n > 5) return resolve(null);
+      const req = https.get(u, { headers: { 'User-Agent': 'sgen-site-qa' } }, (r) => {
+        if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) { r.resume(); return go(r.headers.location, n + 1); }
+        if (r.statusCode !== 200) { r.resume(); return resolve(null); }
+        let b = ''; r.setEncoding('utf8'); r.on('data', c => b += c); r.on('end', () => resolve(b.trim()));
+      });
+      req.on('error', () => resolve(null));
+      req.setTimeout(10000, () => { req.destroy(); resolve(null); });
+    })(FEED_VERSION_URL, 0);
+  });
+}
+function refreshFeed() { fetchFeedVersion().then(v => { if (v) FEED_VERSION = v; }).catch(() => {}); }
+
+// Detailed diagnostics as Markdown — for the user to download from the Logs window and send for review.
+function safeResolve(m) { try { require.resolve(m); return true; } catch (_) { return false; } }
+function tailFile(p, n) { try { const t = fs.readFileSync(p, 'utf8').split(/\r?\n/); return t.slice(-n).join('\n'); } catch (_) { return ''; } }
+function buildDiagnostics() {
+  const L = [], now = new Date().toISOString();
+  L.push('# SGEN Site QA — Diagnostics', '', '_Generated ' + now + '_', '');
+  L.push('## Version');
+  L.push('- Running engine: **' + (SELF_VER || 'base (bundled with the app)') + '**');
+  L.push('- Latest on update feed: **' + (FEED_VERSION || 'unknown / offline') + '**');
+  L.push('- Engine directory: `' + __dirname + '`');
+  L.push('- User data: `' + NOTES_DIR + '`', '');
+  L.push('## Environment');
+  L.push('- Node: ' + process.version);
+  L.push('- Platform: ' + process.platform + ' ' + process.arch);
+  L.push('- Local server port: ' + PORT);
+  L.push('- Playwright browsers path: `' + (process.env.PLAYWRIGHT_BROWSERS_PATH || '(default)') + '`');
+  L.push('- Playwright module: ' + (safeResolve('playwright') ? 'present' : 'MISSING'));
+  L.push('- sharp module: ' + (safeResolve('sharp') ? 'present' : 'MISSING'));
+  L.push('- Bundled browsers dir exists: ' + ((process.env.PLAYWRIGHT_BROWSERS_PATH && fs.existsSync(process.env.PLAYWRIGHT_BROWSERS_PATH)) ? 'yes' : 'no / unknown'));
+  L.push('- Uptime: ' + Math.round(process.uptime()) + 's');
+  try { L.push('- Memory RSS: ' + Math.round(process.memoryUsage().rss / 1048576) + ' MB'); } catch (_) {}
+  L.push('- Active scans right now: ' + ACTIVE_SCANS, '');
+  L.push('## Update history (this machine)');
+  const h = readHistory();
+  if (h.length) h.slice().reverse().forEach(e => L.push('- v' + e.version + ' — ' + e.at)); else L.push('- (none recorded yet)');
+  L.push('');
+  L.push('## Recent runs');
+  let runs = []; try { runs = listRuns(); } catch (_) {}
+  L.push('- Runs directory: `' + RUNS + '`');
+  L.push('- Total listed: ' + runs.length);
+  runs.slice(0, 25).forEach(r => L.push('- [' + r.kind + '] ' + r.host + ' — ' + r.when + '  (`' + r.id + '`)'));
+  L.push('');
+  L.push('## Recent app log (last 60 lines)');
+  const logTxt = tailFile(path.join(NOTES_DIR, 'logs', 'main.log'), 60);
+  L.push('```', logTxt || '(no log file found)', '```', '');
+  L.push('## Version notes (recent)');
+  CHANGELOG.slice(0, 6).forEach(c => { L.push('### v' + c.version + ' (' + c.date + ')'); c.notes.forEach(n => L.push('- ' + n)); L.push(''); });
+  return L.join('\n');
+}
 
 // ---- shared page chrome (nav + shared runner) ---------------------------------------------------
 function appPage() {
@@ -64,7 +218,10 @@ function appPage() {
   @media(max-width:760px){ .top .env{display:none} .tabbar button .nd{display:none} .tabbar button{padding:11px 12px;text-align:center;align-items:center} .tabbar button b{font-size:13px} }
   @media(max-width:560px){ .tabbar{flex-wrap:wrap} .tabbar button{flex:1 1 45%;border-bottom:1px solid var(--line)} .tabbar button.on{border-bottom:2px solid var(--brand-solid)} }
   @media(max-width:440px){ .top .brand .bv{display:none} }
-  html,body{max-width:100%;overflow-x:hidden}
+  /* overflow-x:clip (NOT hidden) prevents sideways scroll WITHOUT creating a scroll container, so the
+     sticky header + tool tabs stay locked to the top during scroll. */
+  html,body{max-width:100%;overflow-x:clip}
+  .topbar{box-shadow:0 1px 0 var(--line),0 6px 18px -12px rgba(0,0,0,.6)}
   .wrap{width:100%;max-width:none;margin:0;padding:26px clamp(22px,4vw,56px) 60px;box-sizing:border-box}
   .panel{display:none}.panel.on{display:block}
   .card,.pbar,.status,.cmplink{width:100%;box-sizing:border-box}
@@ -87,13 +244,19 @@ function appPage() {
   .upd{display:flex;align-items:center;gap:8px;margin-left:10px}
   .upd-btn{background:transparent;border:1px solid var(--line-strong);color:var(--ink-soft);border-radius:8px;padding:6px 12px;font-size:12px;font-family:inherit;cursor:pointer}
   .upd-btn:hover{color:var(--ink);border-color:var(--brand)}.upd-btn:disabled{opacity:.55;cursor:default}
+  .upd-btn.has-update{color:#fff;background:var(--brand-solid);border-color:var(--brand-solid);font-weight:700}
+  .upd-btn.has-update:hover{background:var(--brand);border-color:var(--brand);color:#fff}
+  .upd-toast{position:fixed;right:18px;bottom:18px;z-index:200;max-width:340px;background:var(--surface);border:1px solid var(--brand-solid);border-left:4px solid var(--brand-solid);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:13px 16px;font-size:12.5px;color:var(--ink-soft);line-height:1.55;opacity:0;transform:translateY(10px);transition:opacity .3s,transform .3s}
+  .upd-toast.show{opacity:1;transform:none}
+  .upd-toast b{color:var(--ink);display:block;margin-bottom:3px;font-size:13px}
   .upd-st{font-family:var(--mono);font-size:11px;color:var(--ink-faint);white-space:nowrap}
   .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
   .chip{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer;user-select:none}
   .chip input{accent-color:var(--brand-solid)}
   /* viewport chips: even grid so 10 device widths line up in tidy columns instead of a ragged wrap */
-  #v-vps{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
-  #v-vps .chip{white-space:nowrap}
+  #v-vps,#a-vps{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+  #v-vps .chip,#a-vps .chip{white-space:nowrap}
+  #v-vps .vpdiv,#a-vps .vpdiv{grid-column:1/-1;font-size:11px;color:var(--ink-soft);border-top:1px solid var(--line);padding-top:7px;margin-top:1px}
   .grp{margin-top:14px}.grp .glab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-faint);font-weight:700;margin-bottom:7px}
   .opts{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;align-items:center;font-size:13px;color:var(--ink-soft)}
   .opts label{display:flex;align-items:center;gap:6px}
@@ -117,14 +280,30 @@ function appPage() {
   .ritem a{color:var(--brand);font-weight:600;font-size:12.5px}
   .hint{font-family:var(--mono);font-size:11px;color:var(--ink-faint)}
   /* two-column tool layout: controls left, results right */
-  .toolgrid{display:grid;grid-template-columns:minmax(320px,430px) 1fr;gap:20px;align-items:start}
-  .toolgrid .col-right{min-width:0}
-  @media(max-width:920px){.toolgrid{grid-template-columns:1fr}}
+  /* single column top-to-bottom (matches Site Audit): controls card, then results at full width — no empty sidebar */
+  .toolgrid{display:block}
+  .toolgrid .col-left,.toolgrid .col-right{min-width:0}
+  .toolgrid .col-right{margin-top:18px}
   .card{margin-bottom:0}
   .placeholder{border:1px dashed var(--line-strong);border-radius:12px;padding:46px 22px;text-align:center;color:var(--ink-faint);font-size:13px;line-height:1.6;background:var(--surface-2)}
   .placeholder b{color:var(--ink-soft);display:block;margin-bottom:4px;font-size:13.5px}
   /* Site Audit — horizontal scan-configuration grouping (operator console, not a settings form) */
   .scancfg{margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+  /* URL(s) on one half, config on the other — fills the width, matches across tools */
+  .cfg-split{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+  .cfg-split>.fld,.cfg-split>.cs-cfg,.cfg-split>.cs-col{flex:1 1 300px;min-width:0}
+  .cfg-split .glab{margin-bottom:9px}
+  .cs-col>.grp:first-child{margin-top:0}
+  /* Site Audit: URL ~35%, scan config fills the rest on one row */
+  .cfg-au>.fld{flex:0 1 35%;min-width:200px}
+  .cfg-au>.cs-cfg{flex:1 1 60%;min-width:0}
+  .cfg-au .cfg-grid{flex-wrap:nowrap;align-items:center}
+  @media(max-width:900px){.cfg-au>.fld,.cfg-au>.cs-cfg{flex:1 1 100%}.cfg-au .cfg-grid{flex-wrap:wrap}}
+  /* Visual + Post-Deploy: 2 inner columns, then an info + button footer row */
+  .vc-foot{display:flex;gap:20px;align-items:flex-end;margin-top:16px;flex-wrap:nowrap}
+  .vc-foot>.grp{flex:1 1 auto;min-width:0;margin-top:0}
+  .vc-foot>.row{flex:none;width:auto;margin:0}
+  @media(max-width:760px){.vc-foot{flex-wrap:wrap}.vc-foot>.grp{flex:1 1 100%}.vc-foot>.row{width:100%}}
   .cfg-grid{display:flex;flex-wrap:wrap;gap:14px 24px;align-items:center}
   .cfg-grid>label{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);font-weight:600}
   .cfg-c{flex:0 0 auto}
@@ -149,29 +328,66 @@ function appPage() {
   .tour-pop h3{font-size:17px;margin:0 0 8px;letter-spacing:-.01em}
   .tour-pop p{color:var(--ink-soft);font-size:13px;line-height:1.6;margin:0 0 14px}
   .tour-foot{display:flex;align-items:center;gap:9px;padding:13px 0;border-top:1px solid var(--line);margin:0 -20px 0;padding-left:20px;padding-right:20px}
-  .wk-dots{display:flex;gap:6px;margin-right:auto}
+  .wk-dots{display:flex;flex-wrap:wrap;gap:5px;flex:1 1 0;min-width:0;margin-right:8px}
   .wk-dots i{width:7px;height:7px;border-radius:50%;background:var(--line-strong);transition:background .2s}.wk-dots i.on{background:var(--brand-solid)}
   .wk-btn{background:var(--surface);border:1px solid var(--line-strong);color:var(--ink);border-radius:8px;padding:8px 17px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
   .wk-btn:disabled{opacity:.4;cursor:default}
   .wk-btn.primary{background:var(--brand-solid);color:#fff;border-color:var(--brand-solid)}
   .wk-skip{background:none;border:0;color:var(--ink-faint);font-size:12px;cursor:pointer;font-family:inherit;margin-right:4px}
   .help-btn{background:none;border:1px solid var(--line-strong);color:var(--ink-soft);border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
+  /* version log modal */
+  .logmodal{position:fixed;inset:0;z-index:120;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.6);padding:6vh 16px;overflow:auto}
+  .logmodal.on{display:flex}
+  .logcard{background:var(--surface);border:1px solid var(--line-strong);border-radius:14px;box-shadow:var(--shadow);width:640px;max-width:100%}
+  .loghead{display:flex;align-items:center;justify-content:space-between;padding:15px 20px;border-bottom:1px solid var(--line)}
+  .loghead b{font-size:15px;letter-spacing:-.01em}
+  .logx{background:none;border:none;color:var(--ink-soft);font-size:15px;cursor:pointer;line-height:1;padding:4px 6px}
+  .logx:hover{color:var(--ink)}
+  .logbody{padding:16px 20px 22px;max-height:64vh;overflow:auto}
+  .loghead-r{display:flex;gap:8px;align-items:center}
+  .logdiag{background:var(--surface-2);border:1px solid var(--line);color:var(--ink-soft);border-radius:7px;padding:5px 11px;font-size:11.5px;cursor:pointer;font-family:inherit}
+  .logdiag:hover{border-color:var(--brand);color:var(--ink)}
+  .diagbar{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+  .sec-note{font-size:11.5px;color:var(--ink-faint);margin-bottom:10px;line-height:1.5}
+  .diagmd{white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-soft);background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px;max-height:50vh;overflow:auto;margin:0}
+  .logsec{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--brand-ink);font-weight:700;margin:16px 0 8px}
+  .logsec:first-child{margin-top:0}
+  .logrow{display:flex;align-items:baseline;gap:10px;padding:3px 0;font-size:12.5px}
+  .logrel{padding:9px 0 10px;border-top:1px solid var(--line)}
+  .logrel:first-of-type{border-top:none}
+  .logrelh{display:flex;align-items:baseline;gap:10px;margin-bottom:5px}
+  .logv{font-weight:700;font-size:13px;color:var(--ink)}
+  .lognow{font-size:10px;font-weight:700;color:#fff;background:var(--brand-solid);border-radius:5px;padding:1px 6px;margin-left:6px;text-transform:uppercase;letter-spacing:.04em}
+  .logmut{color:var(--ink-faint);font-size:11.5px}
+  .logrel ul{margin:0;padding-left:18px}
+  .logrel li{font-size:12.5px;color:var(--ink-soft);line-height:1.65;margin:2px 0}
   .help-btn:hover{color:var(--ink);border-color:var(--brand)}
   /* reports two-column */
-  .rgrid{display:grid;grid-template-columns:minmax(280px,380px) 1fr;gap:18px;align-items:start}
-  @media(max-width:920px){.rgrid{grid-template-columns:1fr}}
+  /* Reports: single column too — run list on top, full-width preview below */
+  .rgrid{display:block}
+  .rgrid .col-left,.rgrid .col-right{min-width:0}
+  .rgrid .col-right{margin-top:16px}
+  .rgrid .rlist{max-height:40vh;overflow:auto}
   .rfilters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
   .rfilters button{background:var(--surface-2);border:1px solid var(--line);color:var(--ink-soft);border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;font-family:inherit}
   .rfilters button.on{background:var(--brand-solid);color:#fff;border-color:var(--brand-solid)}
   .ritem{cursor:pointer}.ritem.sel{border-color:var(--brand);background:var(--surface)}
+  .rtools{display:flex;gap:8px;margin-bottom:10px}
+  .rtools #r-search{flex:1 1 auto;min-width:0;width:auto;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 11px;font-size:12.5px;font-family:inherit}
+  .rtools #r-search:focus{outline:none;border-color:var(--brand)}
+  .rtools #r-date{flex:0 0 auto;width:auto;background:var(--surface-2);border:1px solid var(--line);color:var(--ink-soft);border-radius:8px;padding:7px 9px;font-size:12px;font-family:inherit;cursor:pointer}
+  .rgroup{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+  .rghead{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-faint);font-weight:700;padding:0 2px 6px;border-bottom:1px solid var(--line)}
+  .rghead .rgc{background:var(--surface-2);border:1px solid var(--line);border-radius:99px;padding:0 7px;font-size:10px;color:var(--ink-soft)}
   </style></head><body>
   <header class="topbar">
     <div class="top">
       <div class="brand"><span class="mk"><svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M5 12.5l4.2 4.2L19 7" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="bt">SGEN Site QA<span class="bv" id="brand-ver"></span></span></div>
       <div class="hdr-actions">
-        <div class="env">127.0.0.1:${PORT} · ${gitCommit} · real</div>
         <div class="upd" id="upd" style="display:none"><button class="upd-btn" id="upd-btn" onclick="updClick()">Check for updates</button><span class="upd-st" id="upd-st"></span></div>
-        <button class="help-btn" onclick="openWalk()" title="Reopen the walkthrough">? Help</button>
+        <button class="help-btn" id="logs-btn" onclick="openLog()" title="Version log &amp; what changed">Logs</button>
+        <button class="help-btn" id="manual-btn" onclick="openManual()" title="Open the user manual">Manual</button>
+        <button class="help-btn" id="help-btn" onclick="openWalk()" title="Reopen the walkthrough">? Help</button>
       </div>
     </div>
     <nav class="tabbar" role="tablist" aria-label="Tools">
@@ -187,17 +403,20 @@ function appPage() {
     <section class="panel on" id="p-audit">
       <h2 class="tt">Site Audit</h2><p class="sub">Full single-site tester — links, forms, responsive, accessibility (axe-core), SEO, performance, security (TLS), cross-browser (Firefox + WebKit), console. Independent: needs no inventory, comparison, or certification.</p>
       <div class="card">
-        <label class="fld" style="min-width:0">Site URL<input id="a-url" type="text" placeholder="e.g. sgen.com" spellcheck="false"></label>
-        <div class="scancfg">
-          <div class="glab">Scan Configuration</div>
-          <div class="cfg-grid">
-            <label class="cfg-c">Max pages <input id="a-max" type="number" value="30" min="1" max="500"><span class="help" tabindex="0">?<span class="tip"><b>Max pages</b>How many pages to crawl and test. 1 = homepage only; higher follows the sitemap + internal links up to this cap.<em>Example: 1 for a quick single-page check.</em></span></span></label>
-            <label class="cfg-c"><input id="a-render" type="checkbox" checked> Browser render <span class="help" tabindex="0">?<span class="tip"><b>Browser render</b>Loads each page in a real headless browser for axe-core accessibility, Core Web Vitals, full-page screenshots, and Firefox + WebKit. Off = faster static-only scan.</span></span></label>
-            <label class="cfg-g">Save report as <input id="a-save" type="text" placeholder="reference name" style="flex:1;min-width:120px"><span class="help" tabindex="0">?<span class="tip"><b>Save report as</b>Stores this scan as a reference for future comparisons.<em>Example: save the live site, then compare staging to it.</em></span></span></label>
-            <label class="cfg-g">Compare against <select id="a-baseline" style="flex:1;min-width:120px"><option value="">— none —</option></select><span class="help" tabindex="0">?<span class="tip"><b>Compare against</b>Optional. Compare this audit against a previous saved scan.<em>Example: diff staging vs a saved live baseline.</em></span></span></label>
+        <div class="cfg-split cfg-au">
+          <label class="fld" style="min-width:0">Site URL<input id="a-url" type="text" placeholder="e.g. sgen.com" spellcheck="false"></label>
+          <div class="cs-cfg">
+            <div class="glab">Scan Configuration</div>
+            <div class="cfg-grid">
+              <label class="cfg-c">Max pages <input id="a-max" type="number" value="1" min="1" max="500"><span class="help" tabindex="0">?<span class="tip"><b>Max pages</b>How many pages to crawl and test. 1 = homepage only; higher follows the sitemap + internal links up to this cap.<em>Example: 1 for a quick single-page check.</em></span></span></label>
+              <label class="cfg-c"><input id="a-render" type="checkbox" checked> Browser render <span class="help" tabindex="0">?<span class="tip"><b>Browser render</b>Loads each page in a real headless browser for axe-core accessibility, Core Web Vitals, full-page screenshots, and Firefox + WebKit. Off = faster static-only scan.</span></span></label>
+              <label class="cfg-g">Save report as <input id="a-save" type="text" placeholder="reference name" style="flex:1;min-width:120px"><span class="help" tabindex="0">?<span class="tip"><b>Save report as</b>Stores this scan as a reference for future comparisons.<em>Example: save the live site, then compare staging to it.</em></span></span></label>
+            </div>
           </div>
-          <div class="cfg-action"><button class="run" id="a-btn" onclick="runAudit()">Run audit</button><button class="run ghost" id="a-cancel" onclick="cancelScan('a')" style="display:none">Cancel</button><button class="run retry" id="a-retry" onclick="retryScan('a')" style="display:none">Retry</button></div>
         </div>
+        <div class="grp" style="margin-top:2px"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>What the browser-render responsive sweep tests. The 10 <b style="display:inline">devices</b> are really emulated — touch, pixel density, and the mobile UA on Android. The 3 <b style="display:inline">boundary probes</b> are width only: they test the layout on a framework breakpoint, not a device. Fewer = faster; all selected = the full matrix. AA colour-contrast still runs once even if 1920 is deselected.<em>Leave all selected to keep the standard 13-viewport sweep.</em></span></span></div><div class="chips" id="a-vps">
+          <label class="chip"><input type="checkbox" value="1920" checked>1920 · Desktop</label><label class="chip"><input type="checkbox" value="1440" checked>1440 · MacBook&nbsp;Air</label><label class="chip"><input type="checkbox" value="1180" checked>1180 · iPad&nbsp;Air&nbsp;LS</label><label class="chip"><input type="checkbox" value="820" checked>820 · iPad&nbsp;Air&nbsp;11</label><label class="chip"><input type="checkbox" value="744" checked>744 · iPad&nbsp;mini</label><label class="chip"><input type="checkbox" value="414" checked>414 · iPhone&nbsp;XR/11</label><label class="chip"><input type="checkbox" value="440" checked>440 · iPhone&nbsp;17&nbsp;Max</label><label class="chip"><input type="checkbox" value="393" checked>393 · iPhone&nbsp;16</label><label class="chip"><input type="checkbox" value="360" checked>360 · Galaxy&nbsp;S</label><label class="chip"><input type="checkbox" value="384" checked>384 · Galaxy&nbsp;S&nbsp;Ultra</label><div class="vpdiv">Breakpoint probes — width only, not devices</div><label class="chip"><input type="checkbox" value="1280" checked>1280 · xl&nbsp;boundary</label><label class="chip"><input type="checkbox" value="1024" checked>1024 · lg&nbsp;boundary</label><label class="chip"><input type="checkbox" value="768" checked>768 · md&nbsp;boundary</label></div></div>
+        <div class="cfg-action"><button class="run" id="a-btn" onclick="runAudit()">Run audit</button><button class="run ghost" id="a-cancel" onclick="cancelScan('a')" style="display:none">Cancel</button><button class="run retry" id="a-retry" onclick="retryScan('a')" style="display:none">Retry</button></div>
       </div>
       <div class="pbar" id="a-pbar"><div class="pfill" id="a-pfill"></div></div><div class="status" id="a-status"></div><div class="cmplink" id="a-link"></div><div id="a-frame"></div>
       <div class="placeholder" id="a-ph"><b>Results appear here</b>Run an audit to see the quality score, findings, screenshots, and the full report preview.</div>
@@ -208,20 +427,29 @@ function appPage() {
       <h2 class="tt">Visual Comparison</h2><p class="sub">Compare a reference site and a target site visually across industry device breakpoints — no prior audit, no certification, no stored inventory. Diffs page render + full DOM structure.</p>
       <div class="toolgrid">
         <div class="col-left"><div class="card">
-          <label class="fld" style="min-width:0">Reference URL<input id="v-ref" type="text" placeholder="old / source site" spellcheck="false"></label>
-          <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="v-tgt" type="text" placeholder="new / SGEN site" spellcheck="false"></label>
-          <div class="grp"><div class="glab">Scope <span class="help" tabindex="0">?<span class="tip"><b>Scope</b>How many pages to compare. <b style="display:inline">Full site</b> discovers additional linked pages — useful for audits, but may surface non-canonical URLs (pagination, query variants).<em>Example: Single page for a fast homepage check.</em></span></span></div>
-            <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
-              <select id="v-scope" style="flex:1;min-width:0;max-width:340px"><option value="single">Single page (homepage)</option><option value="multiple">Multiple pages (up to max)</option><option value="sitemap">Sitemap-driven</option><option value="full">Full site</option></select>
-              <label style="font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:6px;flex:none">max pages <input id="v-max" type="number" value="8" min="1" max="200"></label></div></div>
-          <div class="grp"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>Industry-standard device widths. The 360–480 phone band is where most real-world breakage lives.<em>desktop · laptop · iPad landscape/portrait · iPhone Pro Max · iPhone · Android · Galaxy S</em></span></span></div><div class="chips" id="v-vps">
-            <label class="chip"><input type="checkbox" value="1920" checked>1920 · Desktop</label><label class="chip"><input type="checkbox" value="1440" checked>1440 · Laptop</label><label class="chip"><input type="checkbox" value="1200" checked>1200 · Laptop&nbsp;sm</label><label class="chip"><input type="checkbox" value="1024" checked>1024 · iPad&nbsp;LS</label><label class="chip"><input type="checkbox" value="768" checked>768 · iPad</label><label class="chip"><input type="checkbox" value="480" checked>480 · Mobile&nbsp;lg</label><label class="chip"><input type="checkbox" value="430" checked>430 · iPhone&nbsp;Max</label><label class="chip"><input type="checkbox" value="390" checked>390 · iPhone</label><label class="chip"><input type="checkbox" value="380" checked>380 · Android</label><label class="chip"><input type="checkbox" value="360" checked>360 · Galaxy&nbsp;S</label></div></div>
-          <div class="grp"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>Every comparison runs the full check — there is nothing to toggle.<em>Pixel match + structural diff at each viewport.</em></span></span></div>
-            <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:10px 13px">
-              Each paired page is compared at every selected viewport on two axes:
-              <b style="display:inline;color:var(--ink)">pixel match</b> (visual difference %) and
-              <b style="display:inline;color:var(--ink)">structural diff</b> — elements <b style="display:inline;color:var(--ink)">missing</b>, <b style="display:inline;color:var(--ink)">extra</b>, <b style="display:inline;color:var(--ink)">moved</b>, or <b style="display:inline;color:var(--ink)">restyled</b> vs the reference. The full check always runs.</div></div>
-          <div class="row" style="margin-top:16px"><button class="run" id="v-btn" onclick="runVisual()">Run visual comparison</button><button class="run ghost" id="v-cancel" onclick="cancelScan('v')" style="display:none">Cancel</button><button class="run retry" id="v-retry" onclick="retryScan('v')" style="display:none">Retry</button></div>
+          <div class="cfg-split">
+            <div class="cs-col">
+              <label class="fld" style="min-width:0">Reference URL<input id="v-ref" type="text" placeholder="old / source site" spellcheck="false"></label>
+              <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="v-tgt" type="text" placeholder="new / SGEN site" spellcheck="false"></label>
+            </div>
+            <div class="cs-col">
+              <div class="grp"><div class="glab">Scope <span class="help" tabindex="0">?<span class="tip"><b>Scope</b>How many pages to compare. <b style="display:inline">Full site</b> discovers additional linked pages — useful for audits, but may surface non-canonical URLs (pagination, query variants).<em>Example: Single page for a fast homepage check.</em></span></span></div>
+                <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
+                  <select id="v-scope" style="flex:1;min-width:0;max-width:340px"><option value="single">Single page (homepage)</option><option value="multiple">Multiple pages (up to max)</option><option value="sitemap">Sitemap-driven</option><option value="full">Full site</option></select>
+                  <label style="font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:6px;flex:none">max pages <input id="v-max" type="number" value="1" min="1" max="200"></label>
+                  <label style="font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:6px;flex:none" title="Load each page this many times before screenshotting so lazy-loaded / CDN-cold assets are in — fewer false diffs. 1 = no warm-up.">warm-up loads <input id="v-warm" type="number" value="3" min="1" max="5"></label></div></div>
+              <div class="grp"><div class="glab">Viewports <span class="help" tabindex="0">?<span class="tip"><b>Viewports</b>Real device sizes, verified against each vendor's published spec — emulated with touch and pixel density, not just narrowed. The 360–440 phone band is where most real-world breakage lives; the boundary probes catch layouts that break exactly on a framework breakpoint.<em>Desktop · MacBook · iPad Air/mini · iPhone · Galaxy S — plus xl/lg/md boundaries</em></span></span></div><div class="chips" id="v-vps">
+                <label class="chip"><input type="checkbox" value="1920" checked>1920 · Desktop</label><label class="chip"><input type="checkbox" value="1440" checked>1440 · MacBook&nbsp;Air</label><label class="chip"><input type="checkbox" value="1180" checked>1180 · iPad&nbsp;Air&nbsp;LS</label><label class="chip"><input type="checkbox" value="820" checked>820 · iPad&nbsp;Air&nbsp;11</label><label class="chip"><input type="checkbox" value="744" checked>744 · iPad&nbsp;mini</label><label class="chip"><input type="checkbox" value="414" checked>414 · iPhone&nbsp;XR/11</label><label class="chip"><input type="checkbox" value="440" checked>440 · iPhone&nbsp;17&nbsp;Max</label><label class="chip"><input type="checkbox" value="393" checked>393 · iPhone&nbsp;16</label><label class="chip"><input type="checkbox" value="360" checked>360 · Galaxy&nbsp;S</label><label class="chip"><input type="checkbox" value="384" checked>384 · Galaxy&nbsp;S&nbsp;Ultra</label><div class="vpdiv">Breakpoint probes — width only, not devices</div><label class="chip"><input type="checkbox" value="1280" checked>1280 · xl&nbsp;boundary</label><label class="chip"><input type="checkbox" value="1024" checked>1024 · lg&nbsp;boundary</label><label class="chip"><input type="checkbox" value="768" checked>768 · md&nbsp;boundary</label></div></div>
+            </div>
+          </div>
+          <div class="vc-foot">
+            <div class="grp"><div class="glab">What's compared <span class="help" tabindex="0">?<span class="tip"><b>What's compared</b>Every comparison runs the full check — there is nothing to toggle.<em>Pixel match + structural diff at each viewport.</em></span></span></div>
+              <div style="font-size:12.5px;color:var(--ink-soft);line-height:1.7;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:10px 13px">
+                Each paired page is compared at every selected viewport on two axes:
+                <b style="display:inline;color:var(--ink)">pixel match</b> (visual difference %) and
+                <b style="display:inline;color:var(--ink)">structural diff</b> — elements <b style="display:inline;color:var(--ink)">missing</b>, <b style="display:inline;color:var(--ink)">extra</b>, <b style="display:inline;color:var(--ink)">moved</b>, or <b style="display:inline;color:var(--ink)">restyled</b> vs the reference. The full check always runs.</div></div>
+            <div class="row"><button class="run" id="v-btn" onclick="runVisual()">Run visual comparison</button><button class="run ghost" id="v-cancel" onclick="cancelScan('v')" style="display:none">Cancel</button><button class="run retry" id="v-retry" onclick="retryScan('v')" style="display:none">Retry</button></div>
+          </div>
         </div></div>
         <div class="col-right">
           <div class="pbar" id="v-pbar"><div class="pfill" id="v-pfill"></div></div><div class="status" id="v-status"></div><div class="cmplink" id="v-link"></div><div id="v-frame"></div>
@@ -235,17 +463,25 @@ function appPage() {
       <h2 class="tt">Post-Deployment Check</h2><p class="sub">Answers one question: <b>did everything make it across?</b> Inventories every page, section, image, menu and form on the source site, then verifies each one exists intact on the new build — with evidence per item and a PASS / PASS&nbsp;WITH&nbsp;MINOR&nbsp;ISSUES / FAIL verdict. Run it after deploying the rebuild, before go-live.</p>
       <div class="toolgrid">
         <div class="col-left"><div class="card">
-          <label class="fld" style="min-width:0">Source URL<input id="c-src" type="text" placeholder="original site" spellcheck="false"></label>
-          <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="c-tgt" type="text" placeholder="migrated SGEN site" spellcheck="false"></label>
-          <div class="grp"><div class="glab">Migration options</div><div class="opts" style="margin-top:0;flex-direction:column;align-items:flex-start;gap:11px">
-            <label><input id="c-sitemap" type="checkbox"> sitemap-only completeness <span class="help" tabindex="0">?<span class="tip"><b>Sitemap-only</b>Uses the sitemap as the authoritative page list. Recommended for migration completeness checks. Without it, a capped crawl reports completeness as <b style="display:inline">manual</b>, never authoritative.<em>Example: certify docs.sgen.com → staging against the sitemap.</em></span></span></label>
-            <label><input id="c-visual" type="checkbox"> visual comparison stage</label>
-            <label><input id="c-prod" type="checkbox" checked> production validation (audit target)</label>
-            <label>max pages <input id="c-max" type="number" value="30" min="1" max="700"></label>
-          </div></div>
-          <div class="grp"><div class="glab">Evidence <span class="help" tabindex="0">?<span class="tip"><b>Evidence</b>Every finding must have proof (screenshot / DOM / network). Findings without available proof are marked <b style="display:inline">Manual Verification Required</b> — never silently passed.</span></span></div>
-            <div class="hint">Findings carry inventory IDs, status, and an evidence package.</div></div>
-          <div class="row" style="margin-top:16px"><button class="run" id="c-btn" onclick="runCert()">Run certification</button><button class="run ghost" id="c-cancel" onclick="cancelScan('c')" style="display:none">Cancel</button><button class="run retry" id="c-retry" onclick="retryScan('c')" style="display:none">Retry</button></div>
+          <div class="cfg-split">
+            <div class="cs-col">
+              <label class="fld" style="min-width:0">Source URL<input id="c-src" type="text" placeholder="original site" spellcheck="false"></label>
+              <label class="fld" style="min-width:0;margin-top:12px">Target URL<input id="c-tgt" type="text" placeholder="migrated SGEN site" spellcheck="false"></label>
+            </div>
+            <div class="cs-col">
+              <div class="grp"><div class="glab">Migration options</div><div class="opts" style="margin-top:0;flex-direction:column;align-items:flex-start;gap:11px">
+                <label><input id="c-sitemap" type="checkbox"> sitemap-only completeness <span class="help" tabindex="0">?<span class="tip"><b>Sitemap-only</b>Uses the sitemap as the authoritative page list. Recommended for migration completeness checks. Without it, a capped crawl reports completeness as <b style="display:inline">manual</b>, never authoritative.<em>Example: certify docs.sgen.com → staging against the sitemap.</em></span></span></label>
+                <label><input id="c-visual" type="checkbox"> visual comparison stage</label>
+                <label><input id="c-prod" type="checkbox" checked> production validation (audit target)</label>
+                <label>max pages <input id="c-max" type="number" value="1" min="1" max="700"></label>
+              </div></div>
+            </div>
+          </div>
+          <div class="vc-foot">
+            <div class="grp"><div class="glab">Evidence <span class="help" tabindex="0">?<span class="tip"><b>Evidence</b>Every finding must have proof (screenshot / DOM / network). Findings without available proof are marked <b style="display:inline">Manual Verification Required</b> — never silently passed.</span></span></div>
+              <div class="hint">Findings carry inventory IDs, status, and an evidence package.</div></div>
+            <div class="row"><button class="run" id="c-btn" onclick="runCert()">Run certification</button><button class="run ghost" id="c-cancel" onclick="cancelScan('c')" style="display:none">Cancel</button><button class="run retry" id="c-retry" onclick="retryScan('c')" style="display:none">Retry</button></div>
+          </div>
         </div></div>
         <div class="col-right">
           <div class="glab" style="margin-bottom:7px">Pipeline</div>
@@ -261,6 +497,10 @@ function appPage() {
       <h2 class="tt">Reports</h2><p class="sub">Review previous runs. Select one to preview its report; open the HTML or save it as a PDF to share.</p>
       <div class="rgrid">
         <div class="col-left">
+          <div class="rtools">
+            <input id="r-search" type="text" placeholder="Search site or report name…" oninput="renderReports()" spellcheck="false">
+            <select id="r-date" onchange="renderReports()" title="Filter by date"><option value="all">Any time</option><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select>
+          </div>
           <div class="rfilters" id="r-filters">
             <button data-f="all" class="on" onclick="rfilter('all')">All</button>
             <button data-f="audit" onclick="rfilter('audit')">Audit</button>
@@ -272,7 +512,7 @@ function appPage() {
         </div>
         <div class="col-right">
           <div id="r-preview"></div>
-          <div class="placeholder" id="r-ph"><b>Select a report</b>Choose a run on the left to preview its HTML report, evidence, and assets here.</div>
+          <div class="placeholder" id="r-ph"><b>Select a report</b>Choose a run above to preview its HTML report, evidence, and assets here.</div>
         </div>
       </div>
     </section>
@@ -295,8 +535,20 @@ function appPage() {
     </div>
   </div>
 
+  <!-- version log & update history (opened from the Logs button beside Help) -->
+  <div id="logmodal" class="logmodal" onclick="if(event.target===this)closeLog()">
+    <div class="logcard">
+      <div class="loghead"><b>Version log &amp; updates</b><div class="loghead-r"><button class="logdiag" onclick="genDiag()">Generate diagnostics</button><button class="logx" onclick="closeLog()" aria-label="Close">&#10005;</button></div></div>
+      <div class="logbody" id="logbody"></div>
+    </div>
+  </div>
+
   <script>
-    var VPMAP={1920:'1920 · desktop',1440:'1440 · laptop',1200:'1200 · laptop-sm',1024:'1024 · iPad landscape',768:'768 · iPad portrait',480:'480 · mobile-lg',430:'430 · iPhone Pro Max',390:'390 · iPhone',380:'380 · Android',360:'360 · Galaxy S'};
+    // chip value (width) -> canonical matrix label. These strings MUST match the labels in
+    // lib/migration-qa/checks-render.js and lib/site-qa/visual-match.js exactly: both backends filter
+    // their matrix BY LABEL, so a typo here silently drops that viewport from the sweep rather than
+    // erroring. Width is a valid key because every width is unique across devices + breakpoint probes.
+    var VPMAP={1920:'1920 · Desktop',1440:'1440 · MacBook Air',1180:'1180 · iPad Air 11 (LS)',820:'820 · iPad Air 11',744:'744 · iPad mini',414:'414 · iPhone XR/11',440:'440 · iPhone 17 Pro Max',393:'393 · iPhone 16',360:'360 · Galaxy S',384:'384 · Galaxy S Ultra',1280:'1280 · xl boundary',1024:'1024 · lg boundary',768:'768 · md boundary'};
     function tab(t){document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('on')});document.getElementById('p-'+t).classList.add('on');document.querySelectorAll('.tabbar button').forEach(function(b){b.classList.toggle('on',b.dataset.t===t)});}
     function $(id){return document.getElementById(id);}
     function checked(cid){return [].slice.call(document.querySelectorAll('#'+cid+' input:checked')).map(function(i){return i.value});}
@@ -354,18 +606,26 @@ function appPage() {
         var n=0,iv=setInterval(function(){fit();if(++n>48)clearInterval(iv);},250);
       });
     }
+    // Every tool's result carries its own actions. Save-as-PDF on all of them; the annotate lane on
+    // visual runs. These previously existed ONLY in the Reports tab, so after running a comparison in
+    // tool 2 you had to leave, find your own run in a list, and click through — the tool that PRODUCES
+    // the artifact never offered to mark it up. Keyed off the route, not the tool prefix, so it stays
+    // correct wherever showReport is called from.
     function showReport(pre,route,label){
       var ph=$(pre+'-ph'); if(ph)ph.style.display='none';
-      $(pre+'-link').innerHTML='<a href="'+route+'" target="_blank">↗ Open '+label+' in a new tab</a>';
+      var ann=route.indexOf('/visual/')===0
+        ? ' &nbsp; <a href="/annotate/'+route.slice(8)+'" target="_blank">✎ Annotate &amp; export PDF</a>' : '';
+      $(pre+'-link').innerHTML='<a href="'+route+'" target="_blank">↗ Open '+label+' in a new tab</a>'
+        +' &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a>'+ann;
       var f=document.createElement('iframe');f.scrolling='no';autosize(f);f.src=route;
       $(pre+'-frame').appendChild(f);
     }
     function mark(pre,stage){var p=$(pre+'-pipe');if(!p)return;var els=p.querySelectorAll('span');var hit=false;els.forEach(function(s){if(s.dataset.s===stage){s.className='on';hit=true;}else if(!hit){s.className='done';}});}
 
     // 1 Site Audit
-    fetch('/api/baselines').then(function(r){return r.json()}).then(function(d){var s=$('a-baseline');(d.baselines||[]).forEach(function(b){var o=document.createElement('option');o.value=b;o.textContent=b;s.appendChild(o)})});
     function runAudit(){var url=$('a-url').value.trim();if(!url){$('a-status').textContent='Enter a site URL.';return;}
-      stream('/api/run',{url:url,maxPages:+$('a-max').value||30,render:$('a-render').checked,save:$('a-save').value.trim(),baseline:$('a-baseline').value},'a',function(m){
+      var vps=checked('a-vps').map(function(w){return VPMAP[w]});
+      stream('/api/run',{url:url,maxPages:+$('a-max').value||1,render:$('a-render').checked,viewports:vps,save:$('a-save').value.trim()},'a',function(m){
         if(!m.ok){$('a-status').textContent='Scan failed: '+(m.error||'unknown');return;}
         $('a-status').innerHTML='Done — '+m.verdict+' · score '+m.score+'% · pass '+m.tally.pass+' / warn '+m.tally.warn+' / fail '+m.tally.fail+' / manual '+m.tally.manual+' · saved to history';
         var cmp='';if(m.comparison)cmp=' · <a href="/compare/'+m.id+'" target="_blank">open comparison ↗</a>';$('a-link').innerHTML='<a href="/report/'+m.id+'" target="_blank">↗ Open full report</a>'+cmp;
@@ -374,7 +634,7 @@ function appPage() {
     // 2 Visual Comparison
     function runVisual(){var ref=$('v-ref').value.trim(),tgt=$('v-tgt').value.trim();if(!ref||!tgt){$('v-status').textContent='Enter both Reference and Target URLs.';return;}
       var vps=checked('v-vps').map(function(w){return VPMAP[w]});
-      stream('/api/visual',{ref:ref,target:tgt,scope:$('v-scope').value,maxPages:+$('v-max').value||8,viewports:vps,axes:checked('v-ax')},'v',function(m){
+      stream('/api/visual',{ref:ref,target:tgt,scope:$('v-scope').value,maxPages:+$('v-max').value||1,viewports:vps,axes:checked('v-ax'),warmLoads:+$('v-warm').value||3},'v',function(m){
         if(!m.ok){$('v-status').textContent='Comparison failed: '+(m.error||'unknown');return;}
         $('v-status').innerHTML='Done — overall match '+m.overall+'% · '+m.pairs+' page(s) · '+m.viewports+' viewport(s)'+(m.sharp?'':' · (pixel diff off: sharp missing)');
         showReport('v','/visual/'+m.id,'visual report');});}
@@ -382,7 +642,7 @@ function appPage() {
     // 3 Post-Deployment Check
     function runCert(){var src=$('c-src').value.trim(),tgt=$('c-tgt').value.trim();if(!src||!tgt){$('c-status').textContent='Enter both Source and Target URLs.';return;}
       $('c-pipe').querySelectorAll('span').forEach(function(s){s.className=''});
-      stream('/api/certify',{source:src,target:tgt,sitemapOnly:$('c-sitemap').checked,visual:$('c-visual').checked,production:$('c-prod').checked,maxPages:+$('c-max').value||30},'c',function(m){
+      stream('/api/certify',{source:src,target:tgt,sitemapOnly:$('c-sitemap').checked,visual:$('c-visual').checked,production:$('c-prod').checked,maxPages:+$('c-max').value||1},'c',function(m){
         if(!m.ok){$('c-status').textContent='Post-deployment check failed: '+(m.error||'unknown');return;}
         $('c-pipe').querySelectorAll('span').forEach(function(s){s.className='done'});
         var subw=(m.subErrors&&m.subErrors.length)?' <span style="color:var(--warn)">· '+m.subErrors.length+' stage(s) skipped: '+m.subErrors.join('; ')+'</span>':'';
@@ -394,18 +654,44 @@ function appPage() {
     function loadReports(){fetch('/api/reports').then(function(r){return r.json()}).then(function(d){R_DATA=d;renderReports();}).catch(function(e){$('r-list').innerHTML='<div class="hint">reports error: '+e+'</div>';});}
     function rfilter(f){R_FILTER=f;[].forEach.call(document.querySelectorAll('#r-filters button'),function(b){b.classList.toggle('on',b.dataset.f===f)});renderReports();}
     function renderReports(){
-      var el=$('r-list'),rows=[],f=R_FILTER;
-      if(f==='all'||f!=='case'){ (R_DATA.runs||[]).filter(function(x){return f==='all'||x.kind===f;}).forEach(function(x){
-        var route=x.kind==='visual'?'/visual/'+x.id:(x.kind==='cert'?'/certify/'+x.id:'/report/'+x.id);
-        rows.push('<div class="ritem" data-route="'+route+'" data-json="'+route+'/'+x.json+'" onclick="selectReport(this)"><span class="tag '+(x.kind==='visual'?'visual':x.kind==='cert'?'cert':'audit')+'">'+(x.kind==='visual'?'Visual':x.kind==='cert'?'Post-Deploy':'Audit')+'</span><span class="nm">'+x.host+'</span><span class="when">'+x.when+'</span></div>');});}
-      if(f==='all'||f==='case'){ (R_DATA.cases||[]).forEach(function(c){rows.push('<div class="ritem"><span class="tag case">Case</span><span class="nm">'+c.name+'</span><span class="when">'+(c.verdict||'')+' · '+(c.metrics?c.metrics.pages+'p':'')+'</span></div>');});}
-      el.innerHTML=rows.length?rows.join(''):'<div class="hint">No runs in this filter yet.</div>';
+      var el=$('r-list'),f=R_FILTER;
+      var q=((($('r-search')||{}).value)||'').trim().toLowerCase();
+      var dsel=(($('r-date')||{}).value)||'all';
+      var cutoff=dsel==='all'?0:(Date.now()-parseInt(dsel,10)*86400000);
+      var runs=(R_DATA.runs||[]).filter(function(x){
+        if(f==='case')return false;
+        if(f!=='all'&&x.kind!==f)return false;
+        if(cutoff&&x.mtime&&x.mtime<cutoff)return false;
+        if(q&&((x.host||'')+' '+(x.id||'')+' '+x.kind).toLowerCase().indexOf(q)<0)return false;
+        return true;
+      });
+      // group by site (host); groups ordered by most-recent run (runs already come newest-first)
+      var groups={},order=[];
+      runs.forEach(function(x){ if(!groups[x.host]){groups[x.host]=[];order.push(x.host);} groups[x.host].push(x); });
+      order.sort(function(a,b){return (groups[b][0].mtime||0)-(groups[a][0].mtime||0);});
+      var html='';
+      order.forEach(function(host){
+        var items=groups[host];
+        html+='<div class="rgroup"><div class="rghead">'+host+' <span class="rgc">'+items.length+'</span></div>';
+        items.forEach(function(x){
+          var route=x.kind==='visual'?'/visual/'+x.id:(x.kind==='cert'?'/certify/'+x.id:'/report/'+x.id);
+          html+='<div class="ritem" data-route="'+route+'" data-json="'+route+'/'+x.json+'" onclick="selectReport(this)"><span class="tag '+(x.kind==='visual'?'visual':x.kind==='cert'?'cert':'audit')+'">'+(x.kind==='visual'?'Visual':x.kind==='cert'?'Post-Deploy':'Audit')+'</span><span class="nm">'+x.when+'</span></div>';
+        });
+        html+='</div>';
+      });
+      if(f==='all'||f==='case'){ var cs=(R_DATA.cases||[]).filter(function(c){return !q||((c.name||'').toLowerCase().indexOf(q)>=0);});
+        if(cs.length){ html+='<div class="rgroup"><div class="rghead">Qualification cases <span class="rgc">'+cs.length+'</span></div>';
+          cs.forEach(function(c){html+='<div class="ritem"><span class="tag case">Case</span><span class="nm">'+c.name+'</span><span class="when">'+(c.verdict||'')+' · '+(c.metrics?c.metrics.pages+'p':'')+'</span></div>';});
+          html+='</div>'; } }
+      el.innerHTML=html||'<div class="hint">No reports match — try clearing the search or date filter.</div>';
     }
     function selectReport(elm){
       [].forEach.call(document.querySelectorAll('#r-list .ritem'),function(i){i.classList.remove('sel')});elm.classList.add('sel');
       var route=elm.dataset.route,json=elm.dataset.json;
       $('r-ph').style.display='none';
-      $('r-preview').innerHTML='<div class="cmplink"><a href="'+route+'" target="_blank">↗ Open HTML</a> &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a></div>';
+      // Visual runs get the annotate lane: mark up live-vs-staging, then export those marks as a PDF.
+      var ann=route.indexOf('/visual/')===0?' &nbsp; <a href="/annotate/'+route.slice(8)+'" target="_blank">✎ Annotate &amp; export PDF</a>':'';
+      $('r-preview').innerHTML='<div class="cmplink"><a href="'+route+'" target="_blank">↗ Open HTML</a> &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a>'+ann+'</div>';
       var fr=document.createElement('iframe');fr.scrolling='no';autosize(fr);fr.src=route;
       $('r-preview').appendChild(fr);
     }
@@ -415,14 +701,16 @@ function appPage() {
     var WK_KEY='sgenqa_onboarded_v2';
     var TOUR=[
       {tab:'audit',target:null,lbl:'Welcome',title:'SGEN Site QA',body:"Four offline tools to check any website's quality — audit, compare, verify a migration, and review reports. Nothing leaves this machine. Let me show you around."},
-      {tab:'audit',target:'.tabbar',lbl:'Navigation',title:'Four tools, one app',body:'Switch tools here. Site Audit checks one site · Visual Comparison diffs old vs new · Post-Deployment Check verifies a migration · Reports holds past runs.'},
-      {tab:'audit',target:'#a-url',lbl:'Tool 1 · Site Audit',title:'Enter any site URL',body:'Point it at a live site. It crawls the pages and checks links, forms, responsive, accessibility, SEO, performance, security, and interaction — 128 rules, deterministic, no AI.'},
-      {tab:'audit',target:'#a-btn',lbl:'Tool 1 · Site Audit',title:'Run the audit',body:'Results appear below with a quality score, a launch-readiness verdict, and per-issue "Copy for dev" tickets carrying a stable Playwright/Cypress locator. Screenshots are filterable by page + viewport.'},
+      {tab:'audit',target:'.tabbar',lbl:'Navigation',title:'Four tools, one app',body:'Switch tools here — the header and these tabs stay locked in place as you scroll. Site Audit checks one site · Visual Comparison diffs old vs new · Post-Deployment Check verifies a migration · Reports holds past runs.'},
+      {tab:'audit',target:'#a-url',lbl:'Tool 1 · Site Audit',title:'Enter any site URL',body:'Point it at a live site; the scan configuration sits beside it. Everything you set — URLs, options, viewports — is saved automatically, so you never re-enter it next launch.'},
+      {tab:'audit',target:'#a-btn',lbl:'Tool 1 · Site Audit',title:'Read the result at a glance',body:'The report opens with one clear OVERALL pass/fail up top; the other numbers are 0–100 quality reads, not separate verdicts. The summary cards are clickable — jump straight to the failing checks — and a colour key explains that red means passing.'},
       {tab:'visual',target:'#v-ref',lbl:'Tool 2 · Visual Comparison',title:'Old vs new, side by side',body:'Give a reference URL and a target URL. Every paired page is compared at each viewport on two axes: pixel match and structural diff (missing / extra / moved / restyled elements).'},
-      {tab:'visual',target:'#v-vps',lbl:'Tool 2 · Viewports',title:'Real device widths',body:'Industry-standard breakpoints — desktop, laptop, iPad, iPhone Pro Max, iPhone, Android, Galaxy S. The 360–480 phone band is where most real-world breakage hides.'},
+      {tab:'visual',target:'#v-vps',lbl:'Tool 2 · Viewports',title:'Real devices, really emulated',body:'Ten current devices — Desktop, MacBook Air, iPad Air/mini, iPhone, Galaxy S — each checked against the vendor spec and emulated with real touch and pixel density, not just a narrow window. Below the line sit three framework boundary probes: width only, honestly labelled, because a layout breaks exactly on a breakpoint.'},
       {tab:'cert',target:'#c-src',lbl:'Tool 3 · Post-Deployment Check',title:'Did everything make it across?',body:'After a migration, this inventories every page, section, image, menu and form on the source and verifies each exists intact on the new build — with a PASS / MINOR / FAIL verdict.'},
-      {tab:'reports',target:'[data-t=reports]',lbl:'Tool 4 · Reports',title:'Every run, kept',body:'Preview any past run, open its HTML, or save it as a PDF to hand off. Runs stay on this machine.'},
-      {tab:'audit',target:'.help-btn',lbl:'Done',title:"That's the tour",body:"Reopen it anytime from ? Help. Enter a URL and run your first audit whenever you're ready."}
+      {tab:'reports',target:'[data-t=reports]',lbl:'Tool 4 · Reports',title:'Every run, grouped by site',body:'Past runs are grouped by site, newest first, with a search box and a date filter. Preview any run, open its HTML, or save it as a PDF to hand off. Runs stay on this machine.'},
+      {tab:'audit',target:'#upd-btn',lbl:'Updates',title:'Automatic check, manual apply',body:'The app checks for updates on its own — this button turns red and a toast appears when one is ready. Click it to download, then Restart: a one-second in-app update, no installer.'},
+      {tab:'audit',target:'#logs-btn',lbl:'Logs & support',title:'Version log + diagnostics',body:'Open Logs to see what changed in each version and your update history. “Generate diagnostics” builds a detailed report you can download and send over if anything looks off.'},
+      {tab:'audit',target:'#help-btn',lbl:'Done',title:"That's the tour",body:"Reopen it anytime from ? Help. Enter a URL and run your first audit whenever you're ready."}
     ];
     var TW=0;
     (function initDots(){var d=$('tour-dots');for(var i=0;i<TOUR.length;i++){var s=document.createElement('i');d.appendChild(s);}})();
@@ -436,10 +724,12 @@ function appPage() {
       if(el){ el.scrollIntoView({behavior:'smooth',block:'center'});
         setTimeout(function(){ var r=el.getBoundingClientRect(),pad=8;
           hi.style.top=(r.top-pad)+'px';hi.style.left=(r.left-pad)+'px';hi.style.width=(r.width+pad*2)+'px';hi.style.height=(r.height+pad*2)+'px';hi.classList.add('show');
-          var pw=340,ph=pop.offsetHeight||200,gap=14,vw=innerWidth,vh=innerHeight;
-          var below=r.bottom+gap+ph<vh, left=Math.min(Math.max(12,r.left),vw-pw-12);
+          var pw=pop.offsetWidth||340,ph=pop.offsetHeight||200,gap=14,vw=innerWidth,vh=innerHeight;
+          var left=Math.min(Math.max(12,r.left),vw-pw-12);
+          var top=(r.bottom+gap+ph<vh)?(r.bottom+gap):(r.top-gap-ph);
+          top=Math.max(12,Math.min(top,vh-ph-12));   // keep the whole popup (incl. Next button) on-screen
           pop.style.left=left+'px';
-          pop.style.top=(below?r.bottom+gap:Math.max(12,r.top-gap-ph))+'px';
+          pop.style.top=top+'px';
         },300);
       } else { hi.classList.remove('show');
         pop.style.left=(innerWidth/2-170)+'px';pop.style.top=(innerHeight/2-120)+'px';
@@ -447,6 +737,40 @@ function appPage() {
     }
     function tourGo(dir){ if(dir>0&&TW===TOUR.length-1){tourEnd();return;} TW=Math.max(0,Math.min(TOUR.length-1,TW+dir)); tourShow(); }
     function openWalk(){ TW=0; $('tour').classList.add('on'); tourShow(); }
+    // ---- version log & update history ----
+    function logEsc(s){return String(s).replace(/[&<>]/g,function(c){return c==='&'?'&amp;':c==='<'?'&lt;':'&gt;';});}
+    function logFmt(iso){try{return new Date(iso).toLocaleString([],{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}catch(e){return iso;}}
+    function openLog(){
+      var m=$('logmodal'); m.classList.add('on'); var b=$('logbody'); b.innerHTML='<div class="logmut">Loading…</div>';
+      var cur=window.__appver||null;
+      fetch('/api/notes').then(function(r){return r.json();}).then(function(d){
+        var h='', hist=(d.history||[]).slice().reverse();
+        if(hist.length){ h+='<div class="logsec">Update history — this computer</div>';
+          hist.forEach(function(e){ h+='<div class="logrow"><span class="logv">v'+logEsc(e.version)+'</span><span class="logmut">updated '+logFmt(e.at)+'</span></div>'; }); }
+        h+='<div class="logsec">What changed in each version</div>';
+        (d.changelog||[]).forEach(function(c){
+          var now=(cur&&c.version===cur)||(!cur&&c.version===d.current);
+          h+='<div class="logrel"><div class="logrelh"><span class="logv">v'+logEsc(c.version)+(now?'<span class="lognow">now</span>':'')+'</span><span class="logmut">'+logEsc(c.date||'')+'</span></div><ul>';
+          (c.notes||[]).forEach(function(n){ h+='<li>'+logEsc(n)+'</li>'; });
+          h+='</ul></div>';
+        });
+        b.innerHTML=h;
+      }).catch(function(){ b.innerHTML='<div class="logmut">Could not load version notes.</div>'; });
+    }
+    function closeLog(){ $('logmodal').classList.remove('on'); }
+    function openManual(){ try{ window.open('/manual','_blank'); }catch(e){} }
+    // Diagnostics — pull a detailed Markdown report from the engine; user downloads/copies it to send for review.
+    function genDiag(){
+      var b=$('logbody'); b.innerHTML='<div class="logmut">Gathering diagnostics…</div>';
+      fetch('/api/diagnostics').then(function(r){return r.json();}).then(function(d){
+        window.__diag={md:d.markdown||'',name:d.filename||'sgen-site-qa-diagnostics.md'};
+        b.innerHTML='<div class="diagbar"><button class="logdiag" onclick="dlDiag()">\\u2b07 Download .md</button><button class="logdiag" onclick="copyDiag(this)">Copy to clipboard</button><button class="logdiag" onclick="openLog()">\\u2039 Back to log</button></div><div class="sec-note">Save this file and send it over for review — it includes versions, environment, update history, recent runs, and the recent app log.</div><pre class="diagmd" id="diagmd"></pre>';
+        $('diagmd').textContent=window.__diag.md;
+      }).catch(function(){ b.innerHTML='<div class="logmut">Could not gather diagnostics. Try again.</div>'; });
+    }
+    function dlDiag(){ if(!window.__diag)return; try{var blob=new Blob([window.__diag.md],{type:'text/markdown'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=window.__diag.name;document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500);}catch(e){} }
+    function copyDiag(btn){ if(!window.__diag)return; try{navigator.clipboard.writeText(window.__diag.md).then(function(){if(btn){var t=btn.textContent;btn.textContent='Copied \\u2713';setTimeout(function(){btn.textContent=t;},1500);}});}catch(e){} }
+    document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeLog(); });
     // "tour seen" persists via the Electron shell (window.sgenApp) when present - the app runs on a fresh
     // random port each launch so page localStorage never carries over; browser build falls back to localStorage.
     function markTourSeen(){ try{localStorage.setItem(WK_KEY,'1');}catch(e){} if(window.sgenApp&&sgenApp.setFlag){try{sgenApp.setFlag(WK_KEY,'1');}catch(e){}} }
@@ -465,24 +789,61 @@ function appPage() {
     // update exists) download → restart-to-install, driven by events forwarded from the main process.
     (function(){
       if(!window.sgenUpdate)return;
-      var box=$('upd'),btn=$('upd-btn'),st=$('upd-st'),mode='check';
+      var box=$('upd'),btn=$('upd-btn'),st=$('upd-st'),mode='check',toasted='';
       box.style.display='';
       function set(t){st.textContent=t;}
-      try{sgenUpdate.version().then(function(v){if(v){var bv=$('brand-ver');if(bv)bv.textContent='v'+v;if(mode==='check')set('v'+v);}});}catch(e){}
+      function svGt(a,b){var pa=String(a).split('.').map(Number),pb=String(b).split('.').map(Number);for(var i=0;i<3;i++){if((pa[i]||0)>(pb[i]||0))return true;if((pa[i]||0)<(pb[i]||0))return false;}return false;}
+      try{sgenUpdate.version().then(function(v){if(v){window.__appver=v;var bv=$('brand-ver');if(bv)bv.textContent='v'+v;if(mode==='check')set('v'+v);autoCheck();}});}catch(e){}
       window.updClick=function(){
         if(mode==='install'){sgenUpdate.install();return;}
         if(mode==='download'){btn.disabled=true;set('Downloading…');sgenUpdate.download();return;}
-        btn.disabled=true;set('Checking…');
+        btn.disabled=true;set('Checking…');   // 'avail' or plain check -> shell verifies + downloads (manual)
         sgenUpdate.check().then(function(r){btn.disabled=false;if(r&&r.state==='dev')set(r.message||'Installed build only');else if(r&&r.state==='error')set('Error: '+(r.message||''));});
       };
       sgenUpdate.onStatus(function(p){
         if(!p)return;
         if(p.state==='checking'){btn.disabled=true;set('Checking…');}
-        else if(p.state==='none'){btn.disabled=false;mode='check';btn.textContent='Check for updates';set('Up to date');}
-        else if(p.state==='available'){btn.disabled=false;mode='download';btn.textContent='Download update';set('v'+(p.version||'')+' available');}
+        else if(p.state==='none'){btn.disabled=false;mode='check';btn.classList.remove('has-update');btn.textContent='Check for updates';set('Up to date');}
+        else if(p.state==='available'){btn.disabled=false;mode='download';btn.classList.add('has-update');btn.textContent='Download update';set('v'+(p.version||'')+' available');}
         else if(p.state==='downloading'){btn.disabled=true;set('Downloading… '+(p.percent||0)+'%');}
-        else if(p.state==='downloaded'){btn.disabled=false;mode='install';btn.textContent='Restart to update';set('v'+(p.version||'')+' ready');}
+        else if(p.state==='downloaded'){btn.disabled=false;mode='install';btn.classList.add('has-update');btn.textContent='Restart to update';set('v'+(p.version||'')+' ready');}
         else if(p.state==='error'){btn.disabled=false;set('Update error');}
+      });
+      // AUTO-CHECK — detect only, never downloads. Poll the engine's cached feed version; if it's newer than
+      // the running app, redden the button + toast. Download + install stay a manual click (above).
+      function updToast(v){var t=document.createElement('div');t.className='upd-toast';t.innerHTML='<b>Update available — v'+v+'</b>Click the red “Update available” button in the top bar to download, then Restart to install.';document.body.appendChild(t);requestAnimationFrame(function(){t.classList.add('show');});setTimeout(function(){t.classList.remove('show');setTimeout(function(){if(t.parentNode)t.remove();},400);},9000);}
+      function markAvail(v){if(mode==='install'||mode==='download')return;mode='avail';btn.disabled=false;btn.classList.add('has-update');btn.textContent='Update available';set('v'+v);if(toasted!==v){toasted=v;updToast(v);}}
+      function autoCheck(){if(mode==='install'||mode==='download')return;fetch('/api/feed-version').then(function(r){return r.json();}).then(function(d){if(d&&d.version&&window.__appver&&svGt(d.version,window.__appver))markAvail(d.version);}).catch(function(){});}
+      setInterval(autoCheck,10*60*1000);
+    })();
+
+    // Persist tool settings across launches — every input/checkbox/select is saved on change and restored
+    // on load, so you don't re-set them each time. Backed by the shell's userData (window.sgenApp) with a
+    // localStorage fallback (the engine runs on a fresh random port each launch, resetting page localStorage).
+    (function(){
+      var KEY='sgenqa_form_v1';
+      var IDS=['a-url','a-max','a-render','a-save','v-ref','v-tgt','v-scope','v-max','v-warm','c-src','c-tgt','c-sitemap','c-visual','c-prod','c-max'];
+      var GROUPS=['v-vps','v-ax','a-vps'];   // checkbox groups, keyed by container id
+      function lsGet(){try{return JSON.parse(localStorage.getItem(KEY)||'{}');}catch(e){return {};}}
+      function load(cb){ if(window.sgenApp&&sgenApp.getFlag){sgenApp.getFlag(KEY).then(function(v){cb(v?JSON.parse(v):lsGet());}).catch(function(){cb(lsGet());});} else cb(lsGet()); }
+      function store(s){var j=JSON.stringify(s);if(window.sgenApp&&sgenApp.setFlag){try{sgenApp.setFlag(KEY,j);}catch(e){}}try{localStorage.setItem(KEY,j);}catch(e){}}
+      var st={};
+      function snapshot(){IDS.forEach(function(id){var el=$(id);if(!el)return;st[id]=el.type==='checkbox'?el.checked:el.value;});GROUPS.forEach(function(g){var c=$(g);if(!c)return;st[g]=[].slice.call(c.querySelectorAll('input:checked')).map(function(i){return i.value;});});store(st);}
+      load(function(saved){ st=saved||{};
+        IDS.forEach(function(id){var el=$(id);if(!el||st[id]==null)return;if(el.type==='checkbox')el.checked=!!st[id];else el.value=st[id];});
+        // Matrix-migration guard. A saved viewport selection is a list of WIDTHS, and the device matrix
+        // changed (1200/480/430/380 retired; 1180/820/744/414/440/393/384/1280 added). Restoring an old
+        // selection verbatim would leave most of the new matrix unchecked — a silently shrunken sweep the
+        // user never chose, and never sees. So: if a saved group names any value this build no longer
+        // ships, it predates the current matrix — discard it and keep the authored defaults (all on).
+        // A selection made on the CURRENT matrix contains only known values and restores exactly as before.
+        GROUPS.forEach(function(g){var c=$(g);if(!c||!st[g])return;
+          var ins=[].slice.call(c.querySelectorAll('input')),known={};
+          ins.forEach(function(i){known[i.value]=1;});
+          if(st[g].some(function(v){return !known[v];}))return;
+          ins.forEach(function(i){i.checked=st[g].indexOf(i.value)>=0;});});
+        IDS.forEach(function(id){var el=$(id);if(el)el.addEventListener('change',snapshot);});
+        GROUPS.forEach(function(g){var c=$(g);if(c)c.querySelectorAll('input').forEach(function(i){i.addEventListener('change',snapshot);});});
       });
     })();
   </script></body></html>`;
@@ -547,6 +908,245 @@ async function apiPdf(req, res, u) {
   }
 }
 
+// ---- Site Comparison: annotate + annotated PDF export --------------------------------------------
+// Live markup in the app, then a PDF of exactly what was marked up. Two panes only — live vs
+// staging. The red pixel-diff overlay that report-visual.js shows as "Difference overlay" is not
+// part of this path: annotate.buildExportModel() reads shots.ref + shots.cand and nothing else, so
+// there is no diff image to leave out here.
+//
+// Routes:
+//   GET  /annotate/<id>[?print=1][&only=annotated]  live preview (or the print body the PDF renders)
+//   GET  /annotate/<id>/<asset>                     the run's shots, via the shared serveAsset
+//   GET  /api/annotations?id=<id>                   load
+//   POST /api/annotations?id=<id>                   save (whole store; sanitized server-side)
+//   GET  /api/annotate-pdf?id=<id>[&only=annotated] render + save {domain}-{date}-v{n}.pdf -> JSON
+//   GET  /api/annotate-pdf-file?name=<file>         download a previously exported PDF
+// The print document requests its panes downscaled (?w=1200&fmt=jpg). A pane occupies ~540px on an
+// A4 landscape sheet while a real full-page capture is 1920px wide and can run ~15000px tall, so
+// handing Chromium the native PNG buries megabytes of invisible pixels in the PDF. sharp is already
+// a dependency of visual-match.js; if it is missing we serve the original untouched rather than
+// fail the export — a fat PDF beats no PDF.
+let sharpLib = null; try { sharpLib = require('sharp'); } catch (_) { sharpLib = null; }
+async function serveAnnotateAsset(res, id, rest, u) {
+  const w = parseInt(u.searchParams.get('w') || '', 10);
+  const jpg = u.searchParams.get('fmt') === 'jpg';
+  if (!w || !sharpLib || !/\.png$/i.test(rest.split('?')[0])) return serveAsset(res, id, rest);
+  try { rest = decodeURIComponent(rest); } catch (_) {}
+  rest = rest.replace(/\\/g, '/').replace(/\.\.[/\\]/g, '');
+  const f = path.join(RUNS, id, rest);
+  if (!f.startsWith(RUNS) || !fs.existsSync(f)) return send(res, 404, 'text/plain', 'not found');
+  try {
+    let img = sharpLib(f).resize({ width: Math.max(200, Math.min(3000, w)), withoutEnlargement: true });
+    const out = jpg ? await img.jpeg({ quality: 82 }).toBuffer() : await img.png({ compressionLevel: 9 }).toBuffer();
+    return send(res, 200, jpg ? 'image/jpeg' : 'image/png', out);
+  } catch (e) { return serveAsset(res, id, rest); }
+}
+
+function visualRunData(id) {
+  const f = path.join(RUNS, id, 'visual-match.json');
+  if (!fs.existsSync(f)) return null;
+  try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return null; }
+}
+
+function annotateDoc(id, { print = false, onlyAnnotated = false, exportName = null } = {}) {
+  const data = visualRunData(id);
+  if (!data) return null;
+  const runDir = path.join(RUNS, id);
+  const ann = annotate.loadAnnotations(runDir);
+  const model = annotate.buildExportModel(data, ann, { onlyAnnotated });
+  if (exportName) model.exportName = exportName;
+  return { html: renderAnnotate(model, ann, { mode: print ? 'print' : 'live', runId: id }), model, ann };
+}
+
+// Page count straight out of the produced bytes — the PDF's own page objects, not our sheet count.
+// If these two ever disagree, the number reported is the one the reader will actually see.
+function pdfPageCount(buf) {
+  const s = buf.toString('latin1');
+  const byType = (s.match(/\/Type\s*\/Page[^s]/g) || []).length;
+  if (byType) return byType;
+  const counts = [...s.matchAll(/\/Count\s+(\d+)/g)].map(m => +m[1]);
+  return counts.length ? Math.max(...counts) : 0;
+}
+
+function apiAnnotations(req, res, u, body) {
+  const id = safe(u.searchParams.get('id') || '');
+  const runDir = path.join(RUNS, id);
+  if (!id || !fs.existsSync(runDir)) return send(res, 404, 'application/json', JSON.stringify({ ok: false, error: 'run not found' }));
+  if (req.method === 'GET') {
+    const ann = annotate.loadAnnotations(runDir);
+    return send(res, 200, 'application/json', JSON.stringify({ ok: true, annotations: ann, counts: annotate.countAnnotations(ann) }));
+  }
+  let raw; try { raw = JSON.parse(body || '{}'); } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad json' })); }
+  try {
+    const saved = annotate.saveAnnotations(runDir, raw);
+    return send(res, 200, 'application/json', JSON.stringify({ ok: true, annotations: saved, counts: annotate.countAnnotations(saved) }));
+  } catch (e) { return send(res, 500, 'application/json', JSON.stringify({ ok: false, error: String(e && e.message || e) })); }
+}
+
+async function apiAnnotatePdf(req, res, u) {
+  const id = safe(u.searchParams.get('id') || '');
+  const runDir = path.join(RUNS, id);
+  const data = id ? visualRunData(id) : null;
+  if (!data) return send(res, 404, 'application/json', JSON.stringify({ ok: false, error: 'comparison run not found' }));
+  const onlyAnnotated = u.searchParams.get('only') === 'annotated';
+  const ann = annotate.loadAnnotations(runDir);
+  const model = annotate.buildExportModel(data, ann, { onlyAnnotated });
+  if (!model.totals.sheets) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: onlyAnnotated ? 'no annotated sheets yet — add a mark or a note first' : 'this run paired no pages' }));
+  const dir = path.join(RUNS, annotate.EXPORTS_DIRNAME);
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+  // Reserve the name BEFORE rendering, ATOMICALLY. A plain existsSync check would leave a wide
+  // TOCTOU window (the render takes seconds), so two exports fired together could both resolve to
+  // v1 and the second would silently clobber the first — exactly what the versioning rule exists to
+  // prevent. openSync(...,'wx') fails if the name is taken, so the winner owns it; retry to walk up
+  // to the next free version.
+  let name, version, file, fd = null;
+  for (let attempt = 0; attempt < 20 && fd === null; attempt++) {
+    ({ name, version } = annotate.nextExportName(dir, model.domain, annotate.todayStamp()));
+    file = path.join(dir, name);
+    try { fd = fs.openSync(file, 'wx'); } catch (e) { if (e.code !== 'EEXIST') throw e; fd = null; }
+  }
+  if (fd === null) return send(res, 409, 'application/json', JSON.stringify({ ok: false, error: 'could not reserve an export filename for ' + model.domain }));
+  fs.closeSync(fd);
+  const abandon = () => { try { const s = fs.statSync(file); if (!s.size) fs.unlinkSync(file); } catch (_) {} };
+  let chromium;
+  try { ({ chromium } = require('playwright')); }
+  catch (e) { abandon(); return send(res, 501, 'application/json', JSON.stringify({ ok: false, error: 'PDF export needs Playwright (npx playwright install chromium)' })); }
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    const q = `print=1&name=${encodeURIComponent(name)}${onlyAnnotated ? '&only=annotated' : ''}`;
+    // Render THROUGH the local server (not file://) so the <base>-relative shots resolve exactly as
+    // they do in the preview — same reasoning as apiPdf above.
+    await page.goto(`http://127.0.0.1:${PORT}/annotate/${id}?${q}`, { waitUntil: 'networkidle', timeout: 120000 });
+    // Wait on the document's own readiness flag (set once every mark is painted) rather than a sleep.
+    await page.waitForFunction('document.body && document.body.dataset.ready === "1"', null, { timeout: 45000 });
+    await page.emulateMedia({ media: 'screen' });   // keep the SGEN dark skin, as /api/pdf does
+    const pdf = await page.pdf({ format: 'A4', landscape: true, printBackground: true, preferCSSPageSize: false, margin: { top: '6mm', bottom: '6mm', left: '5mm', right: '5mm' } });
+    await browser.close(); browser = null;
+    fs.writeFileSync(file, pdf);
+    const counts = annotate.countAnnotations(ann);
+    return send(res, 200, 'application/json', JSON.stringify({
+      ok: true, file: name, version, bytes: pdf.length, pages: pdfPageCount(pdf),
+      sheets: model.totals.sheets, marks: counts.marks, comments: counts.comments, path: file,
+    }));
+  } catch (e) {
+    if (browser) try { await browser.close(); } catch (_) {}
+    abandon();   // release the reserved name so a failed render doesn't burn a version number
+    return send(res, 500, 'application/json', JSON.stringify({ ok: false, error: 'PDF export failed: ' + (e && e.message || e) }));
+  }
+}
+
+function apiAnnotatePdfFile(res, u) {
+  const name = path.basename(String(u.searchParams.get('name') || ''));
+  if (!/^[a-z0-9.\-]+\.pdf$/i.test(name)) return send(res, 400, 'text/plain', 'bad name');
+  const f = path.join(RUNS, annotate.EXPORTS_DIRNAME, name);
+  if (!f.startsWith(path.join(RUNS, annotate.EXPORTS_DIRNAME)) || !fs.existsSync(f)) return send(res, 404, 'text/plain', 'not found');
+  const buf = fs.readFileSync(f);
+  res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${name}"`, 'content-length': buf.length });
+  res.end(buf);
+}
+
+// ---- Inspect (2.5.12): open a REAL browser on the offending page with the element highlighted -----
+// INSPECT_INJECT is a standalone injectable function string (same pattern as DESCRIBE_ELEMENTS in
+// evidence-providers.js) so the resolve+highlight logic is unit-testable independent of launch mode.
+// Called in-page as (INSPECT_INJECT)(spec); returns { matchedBy, tried[], rect } or matchedBy:null.
+// Fallback tiers, in order: (1) selector, (2) each strategy value, (3) xpath, (4) SIGNATURE
+// (structuralCss → nearest text match → nearest to boundingBox). matchedBy names the tier that hit.
+const INSPECT_INJECT = `(function(spec){
+  spec = spec || {};
+  function byCss(sel){ try{ return sel ? document.querySelector(sel) : null; }catch(e){ return null; } }
+  function byXpath(xp){ try{ var r=document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null); return (r&&r.singleNodeValue&&r.singleNodeValue.nodeType===1)?r.singleNodeValue:null; }catch(e){ return null; } }
+  function looksXpath(v){ return typeof v==='string' && (v.charAt(0)==='/' || v.slice(0,2)==='./'); }
+  var tried=[], el=null, matchedBy=null;
+  // (1) preferred selector
+  if(spec.selector){ tried.push('selector'); el=byCss(spec.selector); if(el)matchedBy='selector'; }
+  // (2) ranked strategies, in order (id > data-testid > class > attr > structural-css > xpath)
+  if(!el && spec.strategies && spec.strategies.length){
+    for(var i=0;i<spec.strategies.length;i++){ var s=spec.strategies[i]; var v=s&&s.value; if(!v)continue;
+      var kind=(s.kind||('#'+i)); tried.push('strategy:'+kind);
+      el = (s.kind==='xpath'||looksXpath(v)) ? byXpath(v) : byCss(v);
+      if(el){ matchedBy='strategy:'+kind; break; } } }
+  // (3) xpath
+  if(!el && spec.xpath){ tried.push('xpath'); el=byXpath(spec.xpath); if(el)matchedBy='xpath'; }
+  // (4) signature fallback — structuralCss, else nearest text match, else nearest to boundingBox
+  if(!el && spec.structuralCss){ tried.push('structuralCss'); el=byCss(spec.structuralCss); if(el)matchedBy='signature:structuralCss'; }
+  if(!el && spec.text){ tried.push('text'); var want=String(spec.text).trim().slice(0,120);
+    if(want){ var all=document.body?document.body.getElementsByTagName('*'):[]; var best=null,bestLen=Infinity;
+      for(var j=0;j<all.length;j++){ var t=(all[j].textContent||'').trim(); if(t && t.indexOf(want)>=0 && t.length<bestLen){ best=all[j]; bestLen=t.length; } }
+      if(best){ el=best; matchedBy='signature:text'; } } }
+  if(!el && spec.boundingBox){ tried.push('boundingBox'); var bb=spec.boundingBox;
+    var cx=(bb.x||0)+(bb.width||0)/2, cy=((bb.y||0)-(window.scrollY||0))+(bb.height||0)/2;
+    var hit=null; try{ hit=document.elementFromPoint(cx, cy); }catch(e){}
+    if(hit){ el=hit; matchedBy='signature:boundingBox'; } }
+  if(!el) return { matchedBy:null, tried:tried, rect:null };
+  // highlight — scroll into view, then a fixed-position overlay box + badge appended to <body>.
+  try{ el.scrollIntoView({block:'center', inline:'center'}); }catch(e){}
+  var r=el.getBoundingClientRect();
+  var OID='__sgen_inspect_overlay__';
+  var old=document.getElementById(OID); if(old&&old.parentNode)old.parentNode.removeChild(old);
+  var box=document.createElement('div'); box.id=OID; box.setAttribute('data-sgen-inspect','1');
+  var top=Math.max(0,r.top), left=Math.max(0,r.left);
+  box.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;'
+    +'border:3px solid #E01F26;border-radius:3px;box-shadow:0 0 0 3px rgba(224,31,38,.35);'
+    +'background:rgba(224,31,38,.12);left:'+left+'px;top:'+top+'px;width:'+Math.max(2,r.width)+'px;height:'+Math.max(2,r.height)+'px;';
+  var badge=document.createElement('div'); badge.textContent=String(spec.label||spec.selector||'element');
+  var badgeTop=(r.top>26)?'-24px':(r.height+4)+'px';
+  badge.style.cssText='position:absolute;left:0;top:'+badgeTop+';background:#E01F26;color:#fff;'
+    +'font:700 12px/1.6 ui-monospace,Menlo,Consolas,monospace;padding:2px 8px;border-radius:5px;'
+    +'white-space:nowrap;max-width:60vw;overflow:hidden;text-overflow:ellipsis;';
+  box.appendChild(badge); document.body.appendChild(box);
+  return { matchedBy:matchedBy, tried:tried, rect:{ x:Math.round(r.left), y:Math.round(r.top), width:Math.round(r.width), height:Math.round(r.height) } };
+})`;
+
+// bound concurrency: never spawn unbounded headed browsers. Each open inspect increments; a browser's
+// 'disconnected' (window closed) decrements. >2 already open → refuse rather than launch a third.
+let INSPECT_INFLIGHT = 0;
+async function apiInspect(req, res) {
+  let body;
+  try { body = JSON.parse(await readBody(req) || '{}'); }
+  catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, reason: 'bad json' })); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return send(res, 400, 'application/json', JSON.stringify({ ok: false, reason: 'bad body' }));
+  const url = String(body.url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return send(res, 400, 'application/json', JSON.stringify({ ok: false, reason: 'only http/https urls can be inspected' }));
+  if (INSPECT_INFLIGHT >= 2) return send(res, 429, 'application/json', JSON.stringify({ ok: false, reason: 'too-many-open' }));
+  let chromium;
+  try { ({ chromium } = require('playwright')); }
+  catch (e) { return send(res, 501, 'application/json', JSON.stringify({ ok: false, reason: 'headed-browser-unavailable' })); }
+  const spec = {
+    selector: body.selector || null,
+    strategies: Array.isArray(body.strategies) ? body.strategies : [],
+    xpath: body.xpath || null,
+    structuralCss: body.structuralCss || null,
+    text: body.text || null,
+    boundingBox: (body.boundingBox && typeof body.boundingBox === 'object') ? body.boundingBox : null,
+    label: String(body.label || (body.fingerprint ? ('#' + String(body.fingerprint).slice(0, 10)) : (body.selector || 'element'))),
+  };
+  INSPECT_INFLIGHT++;
+  let browser = null;
+  try {
+    browser = await chromium.launch({ headless: false });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const result = await page.evaluate(({ code, spec }) => {
+      // eslint-disable-next-line no-new-func
+      const fn = new Function('return (' + code + ')')();
+      return fn(spec);
+    }, { code: INSPECT_INJECT, spec });
+    // KEEP the browser open so the user sees the highlight. Recover the counter when the window closes.
+    browser.on('disconnected', () => { INSPECT_INFLIGHT = Math.max(0, INSPECT_INFLIGHT - 1); });
+    if (result && result.matchedBy) {
+      return send(res, 200, 'application/json', JSON.stringify({ ok: true, matchedBy: result.matchedBy, tried: result.tried || [], rect: result.rect || null }));
+    }
+    return send(res, 200, 'application/json', JSON.stringify({ ok: false, reason: 'element-not-found', tried: (result && result.tried) || [] }));
+  } catch (e) {
+    // fail soft: headed launch throws with no display → never crash. Close any partial browser + recover.
+    if (browser) { try { await browser.close(); } catch (_) {} }
+    INSPECT_INFLIGHT = Math.max(0, INSPECT_INFLIGHT - 1);
+    return send(res, 200, 'application/json', JSON.stringify({ ok: false, reason: 'headed-browser-unavailable', detail: String((e && e.message) || e).slice(0, 200) }));
+  }
+}
+
 // ---- report history listing ---------------------------------------------------------------------
 function listRuns() {
   if (!fs.existsSync(RUNS)) return [];
@@ -574,6 +1174,20 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/baselines') return send(res, 200, 'application/json', JSON.stringify({ baselines: listBaselines() }));
     if (req.method === 'GET' && p === '/api/reports') { let cases = []; try { cases = loadCases(path.join(DATA, 'portfolio.jsonl')); } catch (_) {} return send(res, 200, 'application/json', JSON.stringify({ runs: listRuns(), cases })); }
     if (req.method === 'GET' && p === '/api/status') return send(res, 200, 'application/json', JSON.stringify({ busy: ACTIVE_SCANS > 0, active: ACTIVE_SCANS }));
+    if (req.method === 'GET' && p === '/api/notes') return send(res, 200, 'application/json', JSON.stringify({ current: SELF_VER, changelog: CHANGELOG, history: readHistory() }));
+    if (req.method === 'GET' && p === '/api/feed-version') return send(res, 200, 'application/json', JSON.stringify({ version: FEED_VERSION, current: SELF_VER }));
+    if (req.method === 'GET' && p === '/manual') return send(res, 200, 'text/html; charset=utf-8', MANUAL_HTML || '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:44px;color:#333">The user manual is not available in this build.</body>');
+    if (req.method === 'GET' && p === '/api/diagnostics') { const md = buildDiagnostics(); const fn = 'sgen-site-qa-diagnostics-' + (SELF_VER || 'base') + '-' + new Date().toISOString().slice(0, 10) + '.md'; return send(res, 200, 'application/json', JSON.stringify({ markdown: md, filename: fn })); }
+
+    // Annotate view — generated per request (never a file on disk), so it sits ahead of the
+    // static-report prefix loop. Its assets are the run's own shots, served by the shared handler.
+    if (req.method === 'GET' && p.startsWith('/annotate/')) {
+      const { id, asset } = splitRoute(p, '/annotate');
+      if (asset) return await serveAnnotateAsset(res, id, asset, u);
+      const doc = annotateDoc(id, { print: u.searchParams.get('print') === '1', onlyAnnotated: u.searchParams.get('only') === 'annotated', exportName: u.searchParams.get('name') });
+      if (!doc) return send(res, 404, 'text/plain', 'comparison run not found');
+      return send(res, 200, 'text/html; charset=utf-8', doc.html);
+    }
 
     for (const [prefix, file] of [['report', 'report.html'], ['compare', 'comparison.html'], ['visual', 'visual-match.html'], ['certify', 'report.html']]) {
       if (req.method === 'GET' && p.startsWith('/' + prefix + '/')) {
@@ -585,9 +1199,14 @@ const server = http.createServer(async (req, res) => {
     // await async handlers so their rejections are CAUGHT here (a bare `return apiRun()` would let a
     // rejection escape to an unhandled promise rejection — which crashes Node. Stress-test found this.)
     if (req.method === 'GET' && p === '/api/pdf') return await apiPdf(req, res, u);
+    if (req.method === 'GET' && p === '/api/annotations') return apiAnnotations(req, res, u, null);
+    if (req.method === 'POST' && p === '/api/annotations') return apiAnnotations(req, res, u, await readBody(req));
+    if (req.method === 'GET' && p === '/api/annotate-pdf') return await apiAnnotatePdf(req, res, u);
+    if (req.method === 'GET' && p === '/api/annotate-pdf-file') return apiAnnotatePdfFile(res, u);
     if (req.method === 'POST' && p === '/api/run') return await apiRun(req, res);
     if (req.method === 'POST' && p === '/api/visual') return await apiVisual(req, res);
     if (req.method === 'POST' && p === '/api/certify') return await apiCertify(req, res);
+    if (req.method === 'POST' && p === '/api/inspect') return await apiInspect(req, res);
     return send(res, 404, 'text/plain', 'not found');
   } catch (e) { try { if (!res.headersSent) send(res, 500, 'text/plain', 'server error: ' + (e && e.message || e)); else res.end(); } catch (_) {} }
 });
@@ -607,9 +1226,24 @@ async function apiRun(req, res) {
   let aborted = false; const onClose = () => { aborted = true; }; req.on('close', onClose); res.on('close', onClose);
   const progress = (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct, phase }); };
   try {
-    const data = await runAudit(url, { maxPages: opts.maxPages || 30, render: opts.render !== false, renderSample: Math.min(opts.maxPages || 30, 25), screensDir: path.join(outDir, 'screenshots'), log: () => {}, progress });
+    // maxPages: explicit + honest. `opts.maxPages || 30` treated 0/missing/non-numeric as 30 and
+    // diverged from the UI (whose Max-pages default is 1). Missing/invalid ⇒ single-page (1).
+    const maxPages = Number.isFinite(+opts.maxPages) && +opts.maxPages >= 1 ? +opts.maxPages : 1;
+    // Viewport picker (labels) — filter the render matrix like Visual Comparison; absent/empty ⇒ all.
+    const viewports = Array.isArray(opts.viewports) && opts.viewports.length ? opts.viewports : null;
+    const data = await runAudit(url, { maxPages, render: opts.render !== false, renderSample: Math.min(maxPages, 25), viewports, screensDir: path.join(outDir, 'screenshots'), log: () => {}, progress });
     emit({ t: 'p', pct: 99, phase: 'writing report' });
-    renderReport(data, outDir); recordScan(data);
+    // CHANGE E: auto-compare this scan against the most recent PRIOR recorded scan for this host and
+    // embed a "vs previous scan" panel near the top. loadLatestRecord() runs BEFORE recordScan() below,
+    // so it returns the previous scan (this one is not in history yet). First scan -> subtle empty state.
+    let comparePanel = '';
+    try {
+      const prior = loadLatestRecord(data.host);
+      comparePanel = (prior && prior.data)
+        ? renderComparePanel(diff(prior.data, data), { priorCount: prior.count })
+        : renderComparePanel(null);
+    } catch (e) { comparePanel = ''; }
+    renderReport(data, outDir, { comparePanel }); recordScan(data);
     let comparison = false, cmp = null;
     if (opts.save) saveBaseline(data, opts.save);
     if (opts.baseline) { try { const base = loadResult(opts.baseline); base.data._label = opts.baseline; data._label = 'current'; const d = diff(base.data, data); renderCompare(d, outDir); comparison = true; cmp = d.counts; } catch (e) {} }
@@ -633,7 +1267,7 @@ async function apiVisual(req, res) {
   let aborted = false; const onClose = () => { aborted = true; }; req.on('close', onClose); res.on('close', onClose);
   try {
     emit({ t: 'p', pct: 6, phase: 'discovering + rendering pages' });
-    const data = await visualMatch.run(ref, tgt, { maxPages, outDir, viewports: vps, axes: o.axes, log: () => {}, progress: (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct: Math.max(6, Math.min(96, pct || 0)), phase: phase || 'comparing' }); } });
+    const data = await visualMatch.run(ref, tgt, { maxPages, outDir, viewports: vps, axes: o.axes, warmLoads: o.warmLoads, log: () => {}, progress: (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct: Math.max(6, Math.min(96, pct || 0)), phase: phase || 'comparing' }); } });
     emit({ t: 'p', pct: 98, phase: 'writing report' });
     renderVisual(data, outDir);
     emit({ t: 'done', ok: true, id, overall: data.overall, pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp }); res.end();
@@ -686,6 +1320,36 @@ server.requestTimeout = 0; server.headersTimeout = 0;
 process.on('unhandledRejection', (e) => { process.stderr.write('[unhandledRejection] ' + (e && e.message || e) + '\n'); });
 process.on('uncaughtException', (e) => { process.stderr.write('[uncaughtException] ' + (e && e.stack || e) + '\n'); });
 fs.mkdirSync(RUNS, { recursive: true }); fs.mkdirSync(DATA, { recursive: true });
+recordVersion();   // note this version in the machine's update history (no-op unless the version changed)
+refreshFeed(); setInterval(refreshFeed, 30 * 60 * 1000);   // background auto-check (detect only)
+// --- self-heal: ensure cross-browser engines (firefox/webkit) are installed --------------
+// The desktop shell points PLAYWRIGHT_BROWSERS_PATH at resources/browsers before launching this
+// engine, so detection + install both target the folder the app actually reads. Non-blocking:
+// the server comes up immediately; the (~200 MB) browser download runs in the background and is
+// idempotent (skipped once present), so this is a one-time provision after a fresh engine update.
+const ensureEngines = () => {
+  let pw;
+  try { pw = require('playwright'); } catch (_) { return; }
+  const missing = ['firefox', 'webkit'].filter((n) => {
+    try { const p = pw[n].executablePath(); return !p || !fs.existsSync(p); } catch (_) { return true; }
+  });
+  if (!missing.length) { process.stderr.write('[engines] firefox+webkit present\n'); return; }
+  const dest = process.env.PLAYWRIGHT_BROWSERS_PATH || '(default cache)';
+  process.stderr.write(`[engines] missing ${missing.join('+')} -> background install into ${dest}\n`);
+  try {
+    // playwright 1.60 does not export './cli.js' in its package "exports" map, so
+    // require.resolve('playwright/cli.js') throws ERR_PACKAGE_PATH_NOT_EXPORTED. Resolve the
+    // exported package.json and join cli.js next to it instead.
+    const cli = path.join(path.dirname(require.resolve('playwright/package.json')), 'cli.js');
+    const child = spawn(process.execPath, [cli, 'install', ...missing], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'ignore',
+    });
+    child.on('exit', (c) => process.stderr.write(`[engines] install exit ${c}\n`));
+    child.on('error', (e) => process.stderr.write(`[engines] install error ${e && e.message}\n`));
+  } catch (e) { process.stderr.write(`[engines] cannot start install: ${e && e.message}\n`); }
+};
+ensureEngines();
+
 server.listen(PORT, '127.0.0.1', () => {
   process.stderr.write(`\nSGEN Site QA → http://127.0.0.1:${PORT}\n(4 tools: Site Audit · Visual Comparison · Post-Deployment Check · Reports. Ctrl+C to stop.)\n`);
   if (arg('open', false)) { try { spawn(process.platform === 'win32' ? 'cmd' : 'sh', process.platform === 'win32' ? ['/c', 'start', '', `http://127.0.0.1:${PORT}`] : ['-c', `xdg-open http://127.0.0.1:${PORT}`], { detached: true, stdio: 'ignore' }).unref(); } catch (e) {} }
