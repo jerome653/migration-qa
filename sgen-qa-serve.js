@@ -22,6 +22,8 @@ const { renderCompare, renderComparePanel } = require('./lib/site-qa/report-comp
 const { discoverPages } = require('./lib/migration-qa/crawl');
 const visualMatch = require('./lib/site-qa/visual-match');
 const { render: renderVisual } = require('./lib/site-qa/report-visual');
+const annotate = require('./lib/site-qa/annotate');
+const { render: renderAnnotate } = require('./lib/site-qa/report-annotate');
 const { certifyMigration } = require('./lib/site-qa/inventory/certify-pipeline');
 const { IdRegistry } = require('./lib/site-qa/inventory/id-registry');
 let loadCases; try { ({ loadCases } = require('./lib/site-qa/inventory/portfolio')); } catch (e) { loadCases = () => []; }
@@ -679,7 +681,9 @@ function appPage() {
       [].forEach.call(document.querySelectorAll('#r-list .ritem'),function(i){i.classList.remove('sel')});elm.classList.add('sel');
       var route=elm.dataset.route,json=elm.dataset.json;
       $('r-ph').style.display='none';
-      $('r-preview').innerHTML='<div class="cmplink"><a href="'+route+'" target="_blank">↗ Open HTML</a> &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a></div>';
+      // Visual runs get the annotate lane: mark up live-vs-staging, then export those marks as a PDF.
+      var ann=route.indexOf('/visual/')===0?' &nbsp; <a href="/annotate/'+route.slice(8)+'" target="_blank">✎ Annotate &amp; export PDF</a>':'';
+      $('r-preview').innerHTML='<div class="cmplink"><a href="'+route+'" target="_blank">↗ Open HTML</a> &nbsp; <a href="/api/pdf?route='+encodeURIComponent(route)+'">⬇ Save as PDF</a>'+ann+'</div>';
       var fr=document.createElement('iframe');fr.scrolling='no';autosize(fr);fr.src=route;
       $('r-preview').appendChild(fr);
     }
@@ -896,6 +900,134 @@ async function apiPdf(req, res, u) {
   }
 }
 
+// ---- Site Comparison: annotate + annotated PDF export --------------------------------------------
+// Live markup in the app, then a PDF of exactly what was marked up. Two panes only — live vs
+// staging. The red pixel-diff overlay that report-visual.js shows as "Difference overlay" is not
+// part of this path: annotate.buildExportModel() reads shots.ref + shots.cand and nothing else, so
+// there is no diff image to leave out here.
+//
+// Routes:
+//   GET  /annotate/<id>[?print=1][&only=annotated]  live preview (or the print body the PDF renders)
+//   GET  /annotate/<id>/<asset>                     the run's shots, via the shared serveAsset
+//   GET  /api/annotations?id=<id>                   load
+//   POST /api/annotations?id=<id>                   save (whole store; sanitized server-side)
+//   GET  /api/annotate-pdf?id=<id>[&only=annotated] render + save {domain}-{date}-v{n}.pdf -> JSON
+//   GET  /api/annotate-pdf-file?name=<file>         download a previously exported PDF
+// The print document requests its panes downscaled (?w=1200&fmt=jpg). A pane occupies ~540px on an
+// A4 landscape sheet while a real full-page capture is 1920px wide and can run ~15000px tall, so
+// handing Chromium the native PNG buries megabytes of invisible pixels in the PDF. sharp is already
+// a dependency of visual-match.js; if it is missing we serve the original untouched rather than
+// fail the export — a fat PDF beats no PDF.
+let sharpLib = null; try { sharpLib = require('sharp'); } catch (_) { sharpLib = null; }
+async function serveAnnotateAsset(res, id, rest, u) {
+  const w = parseInt(u.searchParams.get('w') || '', 10);
+  const jpg = u.searchParams.get('fmt') === 'jpg';
+  if (!w || !sharpLib || !/\.png$/i.test(rest.split('?')[0])) return serveAsset(res, id, rest);
+  try { rest = decodeURIComponent(rest); } catch (_) {}
+  rest = rest.replace(/\\/g, '/').replace(/\.\.[/\\]/g, '');
+  const f = path.join(RUNS, id, rest);
+  if (!f.startsWith(RUNS) || !fs.existsSync(f)) return send(res, 404, 'text/plain', 'not found');
+  try {
+    let img = sharpLib(f).resize({ width: Math.max(200, Math.min(3000, w)), withoutEnlargement: true });
+    const out = jpg ? await img.jpeg({ quality: 82 }).toBuffer() : await img.png({ compressionLevel: 9 }).toBuffer();
+    return send(res, 200, jpg ? 'image/jpeg' : 'image/png', out);
+  } catch (e) { return serveAsset(res, id, rest); }
+}
+
+function visualRunData(id) {
+  const f = path.join(RUNS, id, 'visual-match.json');
+  if (!fs.existsSync(f)) return null;
+  try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return null; }
+}
+
+function annotateDoc(id, { print = false, onlyAnnotated = false, exportName = null } = {}) {
+  const data = visualRunData(id);
+  if (!data) return null;
+  const runDir = path.join(RUNS, id);
+  const ann = annotate.loadAnnotations(runDir);
+  const model = annotate.buildExportModel(data, ann, { onlyAnnotated });
+  if (exportName) model.exportName = exportName;
+  return { html: renderAnnotate(model, ann, { mode: print ? 'print' : 'live', runId: id }), model, ann };
+}
+
+// Page count straight out of the produced bytes — the PDF's own page objects, not our sheet count.
+// If these two ever disagree, the number reported is the one the reader will actually see.
+function pdfPageCount(buf) {
+  const s = buf.toString('latin1');
+  const byType = (s.match(/\/Type\s*\/Page[^s]/g) || []).length;
+  if (byType) return byType;
+  const counts = [...s.matchAll(/\/Count\s+(\d+)/g)].map(m => +m[1]);
+  return counts.length ? Math.max(...counts) : 0;
+}
+
+function apiAnnotations(req, res, u, body) {
+  const id = safe(u.searchParams.get('id') || '');
+  const runDir = path.join(RUNS, id);
+  if (!id || !fs.existsSync(runDir)) return send(res, 404, 'application/json', JSON.stringify({ ok: false, error: 'run not found' }));
+  if (req.method === 'GET') {
+    const ann = annotate.loadAnnotations(runDir);
+    return send(res, 200, 'application/json', JSON.stringify({ ok: true, annotations: ann, counts: annotate.countAnnotations(ann) }));
+  }
+  let raw; try { raw = JSON.parse(body || '{}'); } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad json' })); }
+  try {
+    const saved = annotate.saveAnnotations(runDir, raw);
+    return send(res, 200, 'application/json', JSON.stringify({ ok: true, annotations: saved, counts: annotate.countAnnotations(saved) }));
+  } catch (e) { return send(res, 500, 'application/json', JSON.stringify({ ok: false, error: String(e && e.message || e) })); }
+}
+
+async function apiAnnotatePdf(req, res, u) {
+  const id = safe(u.searchParams.get('id') || '');
+  const runDir = path.join(RUNS, id);
+  const data = id ? visualRunData(id) : null;
+  if (!data) return send(res, 404, 'application/json', JSON.stringify({ ok: false, error: 'comparison run not found' }));
+  const onlyAnnotated = u.searchParams.get('only') === 'annotated';
+  const ann = annotate.loadAnnotations(runDir);
+  const model = annotate.buildExportModel(data, ann, { onlyAnnotated });
+  if (!model.totals.sheets) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: onlyAnnotated ? 'no annotated sheets yet — add a mark or a note first' : 'this run paired no pages' }));
+  const dir = path.join(RUNS, annotate.EXPORTS_DIRNAME);
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+  // Reserve the name BEFORE rendering so two exports fired back to back can't both resolve to v1.
+  const { name, version } = annotate.nextExportName(dir, model.domain, annotate.todayStamp());
+  const file = path.join(dir, name);
+  if (fs.existsSync(file)) return send(res, 409, 'application/json', JSON.stringify({ ok: false, error: 'export ' + name + ' already exists' }));
+  let chromium;
+  try { ({ chromium } = require('playwright')); }
+  catch (e) { return send(res, 501, 'application/json', JSON.stringify({ ok: false, error: 'PDF export needs Playwright (npx playwright install chromium)' })); }
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    const q = `print=1&name=${encodeURIComponent(name)}${onlyAnnotated ? '&only=annotated' : ''}`;
+    // Render THROUGH the local server (not file://) so the <base>-relative shots resolve exactly as
+    // they do in the preview — same reasoning as apiPdf above.
+    await page.goto(`http://127.0.0.1:${PORT}/annotate/${id}?${q}`, { waitUntil: 'networkidle', timeout: 120000 });
+    // Wait on the document's own readiness flag (set once every mark is painted) rather than a sleep.
+    await page.waitForFunction('document.body && document.body.dataset.ready === "1"', null, { timeout: 45000 });
+    await page.emulateMedia({ media: 'screen' });   // keep the SGEN dark skin, as /api/pdf does
+    const pdf = await page.pdf({ format: 'A4', landscape: true, printBackground: true, preferCSSPageSize: false, margin: { top: '6mm', bottom: '6mm', left: '5mm', right: '5mm' } });
+    await browser.close(); browser = null;
+    fs.writeFileSync(file, pdf);
+    const counts = annotate.countAnnotations(ann);
+    return send(res, 200, 'application/json', JSON.stringify({
+      ok: true, file: name, version, bytes: pdf.length, pages: pdfPageCount(pdf),
+      sheets: model.totals.sheets, marks: counts.marks, comments: counts.comments, path: file,
+    }));
+  } catch (e) {
+    if (browser) try { await browser.close(); } catch (_) {}
+    return send(res, 500, 'application/json', JSON.stringify({ ok: false, error: 'PDF export failed: ' + (e && e.message || e) }));
+  }
+}
+
+function apiAnnotatePdfFile(res, u) {
+  const name = path.basename(String(u.searchParams.get('name') || ''));
+  if (!/^[a-z0-9.\-]+\.pdf$/i.test(name)) return send(res, 400, 'text/plain', 'bad name');
+  const f = path.join(RUNS, annotate.EXPORTS_DIRNAME, name);
+  if (!f.startsWith(path.join(RUNS, annotate.EXPORTS_DIRNAME)) || !fs.existsSync(f)) return send(res, 404, 'text/plain', 'not found');
+  const buf = fs.readFileSync(f);
+  res.writeHead(200, { 'content-type': 'application/pdf', 'content-disposition': `attachment; filename="${name}"`, 'content-length': buf.length });
+  res.end(buf);
+}
+
 // ---- Inspect (2.5.12): open a REAL browser on the offending page with the element highlighted -----
 // INSPECT_INJECT is a standalone injectable function string (same pattern as DESCRIBE_ELEMENTS in
 // evidence-providers.js) so the resolve+highlight logic is unit-testable independent of launch mode.
@@ -1028,6 +1160,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/manual') return send(res, 200, 'text/html; charset=utf-8', MANUAL_HTML || '<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;padding:44px;color:#333">The user manual is not available in this build.</body>');
     if (req.method === 'GET' && p === '/api/diagnostics') { const md = buildDiagnostics(); const fn = 'sgen-site-qa-diagnostics-' + (SELF_VER || 'base') + '-' + new Date().toISOString().slice(0, 10) + '.md'; return send(res, 200, 'application/json', JSON.stringify({ markdown: md, filename: fn })); }
 
+    // Annotate view — generated per request (never a file on disk), so it sits ahead of the
+    // static-report prefix loop. Its assets are the run's own shots, served by the shared handler.
+    if (req.method === 'GET' && p.startsWith('/annotate/')) {
+      const { id, asset } = splitRoute(p, '/annotate');
+      if (asset) return await serveAnnotateAsset(res, id, asset, u);
+      const doc = annotateDoc(id, { print: u.searchParams.get('print') === '1', onlyAnnotated: u.searchParams.get('only') === 'annotated', exportName: u.searchParams.get('name') });
+      if (!doc) return send(res, 404, 'text/plain', 'comparison run not found');
+      return send(res, 200, 'text/html; charset=utf-8', doc.html);
+    }
+
     for (const [prefix, file] of [['report', 'report.html'], ['compare', 'comparison.html'], ['visual', 'visual-match.html'], ['certify', 'report.html']]) {
       if (req.method === 'GET' && p.startsWith('/' + prefix + '/')) {
         const { id, asset } = splitRoute(p, '/' + prefix);
@@ -1038,6 +1180,10 @@ const server = http.createServer(async (req, res) => {
     // await async handlers so their rejections are CAUGHT here (a bare `return apiRun()` would let a
     // rejection escape to an unhandled promise rejection — which crashes Node. Stress-test found this.)
     if (req.method === 'GET' && p === '/api/pdf') return await apiPdf(req, res, u);
+    if (req.method === 'GET' && p === '/api/annotations') return apiAnnotations(req, res, u, null);
+    if (req.method === 'POST' && p === '/api/annotations') return apiAnnotations(req, res, u, await readBody(req));
+    if (req.method === 'GET' && p === '/api/annotate-pdf') return await apiAnnotatePdf(req, res, u);
+    if (req.method === 'GET' && p === '/api/annotate-pdf-file') return apiAnnotatePdfFile(res, u);
     if (req.method === 'POST' && p === '/api/run') return await apiRun(req, res);
     if (req.method === 'POST' && p === '/api/visual') return await apiVisual(req, res);
     if (req.method === 'POST' && p === '/api/certify') return await apiCertify(req, res);
