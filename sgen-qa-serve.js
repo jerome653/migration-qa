@@ -66,6 +66,10 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.0.1', date: '2026-07-16', notes: [
+    'Release notes are back. Versions 3.0.0 through 4.0.0 shipped with no notes at all, so Logs → Versions showed a bare list of update timestamps with no explanation of what any of them changed. Every version you have installed now has a summary.',
+    'Five older versions (2.5.5–2.5.10) are listed as unrecorded: they shipped during a period when builds were published without being committed, and what changed was genuinely never written down. Saying so beats inventing it.'
+  ] },
   { version: '4.0.0', date: '2026-07-16', notes: [
     'Your scores will change, and this is why: three sets of checks — content artifacts, spelling, and the whole Best Practices section — were built and shipped but never actually ran. They run now. Sites generally score slightly higher because those checks mostly pass.',
     'Scores from 4.0.0 are NOT comparable to earlier scans. Re-baseline before comparing a site to its own history.',
