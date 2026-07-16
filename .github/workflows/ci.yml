@@ -1,0 +1,135 @@
+name: CI
+
+# There was no CI on this repo until 2026-07-16, and the cost is written all over its history:
+# FUNC-008, FUNC-009 and the whole Best Practices suite were registered, tested and NEVER EXECUTED
+# because nothing called applyAdvisory(); VIS-003 shipped dead through 3.0.0/3.0.1 while the UI
+# advertised it; three "frozen: registry 138 rules" gates silently rotted; the changelog froze at
+# 2.5.13 while seven versions shipped past it. Every one of those survived because the suite only ran
+# when a human remembered to run it. This workflow is that human.
+on:
+  push:
+    branches: [main, 'v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  suite:
+    name: test suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: install
+        run: npm ci || npm install
+
+      - name: install playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      # ISOLATED TEMP IS NOT OPTIONAL. finding-store.test.js builds its temp path from a FIXED string
+      # (os.tmpdir() + 'finding-store-test/run-<tag>'), with no pid and no randomness. Two concurrent
+      # runs — or a stale dir from a killed run — collide on it and throw ENOENT/EPERM/ENOTEMPTY, and
+      # three further suites re-run finding-store as a frozen gate, so ONE collision cascades into four
+      # red suites that have nothing to do with the code under test. Measured on the same commit:
+      # shared temp 26/30 RED, isolated temp 30/30 GREEN. Give every run its own TEMP until the
+      # underlying per-run-unique-dir fix lands.
+      - name: run-all (isolated temp)
+        shell: bash
+        run: |
+          PRIV="$RUNNER_TEMP/sgen-qa-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$PRIV"
+          TEMP="$PRIV" TMP="$PRIV" node lib/site-qa/testing/run-all.js
+
+  registry-vs-tests:
+    name: registry invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: registry invariants hold
+        run: node lib/site-qa/rules/registry.test.js
+
+      # The frozen gates hardcode a rule COUNT (e.g. /PASS · 142 rules/). Adding a rule without
+      # updating them breaks three suites at once — that happened on 2026-07-16 and an agent reported
+      # only ONE of the four. This asserts the count the gates expect actually matches the registry,
+      # so the mismatch is named here rather than surfacing as an unrelated red suite.
+      - name: frozen rule-count gates match the registry
+        shell: bash
+        run: |
+          ACTUAL=$(node -e "console.log(require('./lib/site-qa/rules/registry').RULES.length)")
+          echo "registry reports $ACTUAL rules"
+          FROZEN=$(grep -rhoE 'PASS · [0-9]+ rules' lib/site-qa --include='*.test.js' | grep -oE '[0-9]+' | sort -u)
+          echo "frozen gates expect: $FROZEN"
+          for f in $FROZEN; do
+            if [ "$f" != "$ACTUAL" ]; then
+              echo "::error::frozen gate expects $f rules but the registry has $ACTUAL — update the gates in best-practices/content-artifacts/spelling tests"
+              exit 1
+            fi
+          done
+
+  no-dead-rules:
+    name: no rule ships dead
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # THE CHECK THIS REPO NEEDED MOST. A rule can be registered, tested and green while NOTHING
+      # calls the code that emits it — VIS-003 shipped that way, and so did FUNC-008/009 + Best
+      # Practices for their entire existence. Tests cannot catch it: a suite that never runs cannot
+      # fail. So assert the wiring itself.
+      - name: advisory pass is actually invoked by the server
+        shell: bash
+        run: |
+          fail=0
+          grep -q "applyAdvisory" sgen-qa-serve.js || { echo "::error::sgen-qa-serve.js does not call applyAdvisory — the advisory pass (FUNC-008/009, Best Practices, Copy Review) would ship DEAD"; fail=1; }
+          grep -q "collectPages: true" sgen-qa-serve.js || { echo "::error::runAudit is not called with collectPages:true — result.pages is empty so applyAdvisory can never run"; fail=1; }
+          exit $fail
+
+      - name: every suite in the registry has a caller
+        shell: bash
+        run: |
+          fail=0
+          for s in $(node -e "console.log(require('./lib/site-qa/rules/registry').SUITES.join(' '))"); do
+            if ! grep -rq "'$s'" --include='*.js' lib/site-qa/audit.js lib/site-qa/pipeline.js; then
+              echo "::error::suite '$s' exists in the registry but neither audit.js nor pipeline.js references it — its rules would never be emitted"
+              fail=1
+            fi
+          done
+          exit $fail
+
+  release-notes:
+    name: shipped version has release notes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The changelog froze at 2.5.13 while 3.0.0 → 4.0.0 shipped, so Logs → Versions degraded into a
+      # wall of bare timestamps with no explanation of anything. A version with no notes is a bug.
+      - name: package version has a CHANGELOG entry
+        shell: bash
+        run: |
+          V=$(node -e "console.log(require('./package.json').version)")
+          echo "package version: $V"
+          if ! grep -q "version: '$V'" sgen-qa-serve.js; then
+            echo "::error::version $V has no CHANGELOG entry in sgen-qa-serve.js — it would appear in Logs → Versions as a bare timestamp with no summary"
+            exit 1
+          fi
+          echo "CHANGELOG entry for $V found"
