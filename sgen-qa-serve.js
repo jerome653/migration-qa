@@ -73,6 +73,11 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.2.0', date: '2026-07-16', notes: [
+    'Visual Comparison now shows a Quality Score beside the match percentage — a real 0-100 score over its own checks, so a comparison reads like the other tools, not just a similarity number.',
+    'The match percentage is unchanged and still the headline; the Quality Score sits next to it, it does not replace it.',
+    'Coming next: the same Quality Score for Post-Deployment Check, and a "Checks included in the score" control on each tool.'
+  ] },
   { version: '4.1.0', date: '2026-07-16', notes: [
     'Report colours now follow the convention everyone already expects: GREEN = passing, AMBER = warning, RED = failed, GREY = manual review.',
     'Previously the palette was inverted — red meant PASSING — and the report had to print a legend teaching you to read it backwards, while the progress band right below used green for good. Two opposite colour systems on one page. Now there is one.',
