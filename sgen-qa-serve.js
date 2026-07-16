@@ -26,7 +26,7 @@ const { spawn } = require('child_process');
 const { runAudit, SUITES: AUDIT_SUITES } = require('./lib/site-qa/audit');
 const { compute: computeQuality } = require('./lib/site-qa/score');
 const { RULES, WEIGHTS } = require('./lib/site-qa/rules/registry');
-const { renderReport, STYLE } = require('./lib/site-qa/report');
+const { renderReport, STYLE, TOTOP_JS } = require('./lib/site-qa/report');
 const { saveBaseline, loadResult, diff, listBaselines, recordScan, loadLatestRecord } = require('./lib/site-qa/compare');
 const { renderCompare, renderComparePanel } = require('./lib/site-qa/report-compare');
 const { discoverPages } = require('./lib/migration-qa/crawl');
@@ -1336,6 +1336,15 @@ function appPage() {
         IDS.forEach(function(id){var el=$(id);if(el)el.addEventListener('change',snapshot);});
       });
     })();
+${TOTOP_JS}
+    // THE global back-to-top, and the one that does the real work. It is wired to the SHELL's window
+    // because that is the window that actually scrolls: showReport() embeds each report in an iframe
+    // that autosize() grows to the report's full content height with scrolling='no', so the inner
+    // window has innerHeight === scrollHeight and cannot move (measured: a visual report frame is
+    // 2247/2247, an audit ~5458). All the scrolling a user does while reading an embedded report is
+    // THIS window's scrolling — so this control alone covers every report shown in the app, and the
+    // reports' own copies stand down while framed rather than render a button that cannot work.
+    initToTop(window);
   </script></body></html>`;
 }
 
@@ -1385,7 +1394,12 @@ async function apiPdf(req, res, u) {
   try {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${PORT}/${m[1]}/${id}`, { waitUntil: 'networkidle', timeout: 60000 });
+    // print=1 tells the report's client script this render is destined for a PDF, so screen-only
+    // furniture (the floating back-to-top) never installs. It has to be an explicit flag rather than
+    // a CSS @media print rule, BECAUSE of the emulateMedia('screen') line below: that pins the page
+    // to screen media, so print rules cannot match here and a CSS-only guard would silently ship a
+    // floating arrow into a client's PDF. The /annotate route already takes print=1 the same way.
+    await page.goto(`http://127.0.0.1:${PORT}/${m[1]}/${id}?print=1`, { waitUntil: 'networkidle', timeout: 60000 });
     await page.waitForTimeout(1200); // client-side dashboard/scripts settle
     await page.emulateMedia({ media: 'screen' }); // keep the real dark report look, not print styles
     const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '10mm', bottom: '10mm', left: '8mm', right: '8mm' } });
