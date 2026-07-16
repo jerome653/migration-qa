@@ -336,7 +336,18 @@ function appPage() {
   @media(max-width:440px){ .top .brand .bv{display:none} }
   /* overflow-x:clip (NOT hidden) prevents sideways scroll WITHOUT creating a scroll container, so the
      sticky header + tool tabs stay locked to the top during scroll. */
+  /* Paint the ROOT, not just body, and floor the height to the window.
+     Measured 2026-07-16 (Site Audit tab, 1440x900): body/html were both sized to CONTENT (624px) in a
+     900px window with min-height:0 and html's background TRANSPARENT — so the bottom 276px was dark
+     only because CSS propagates body's background to the canvas when html has none. That propagation
+     is a fallback, not a decision: any moment it does not apply (first paint before body renders,
+     print/PDF, the Electron window's own default surface) the same 276px comes back WHITE. That is
+     the "black or white gap" — one cause, two colours, depending on who paints the canvas.
+     Setting the background on html makes the root itself the painter (no propagation involved), and
+     min-height:100vh makes the ground reach the bottom of the window on short tabs. */
+  html{background:#000;min-height:100vh}
   html,body{max-width:100%;overflow-x:clip}
+  body{min-height:100vh}
   .topbar{box-shadow:0 1px 0 var(--line),0 6px 18px -12px rgba(0,0,0,.6)}
   .wrap{width:100%;max-width:none;margin:0;padding:26px clamp(22px,4vw,56px) 60px;box-sizing:border-box}
   .panel{display:none}.panel.on{display:block}
