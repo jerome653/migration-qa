@@ -24,6 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { runAudit, SUITES: AUDIT_SUITES } = require('./lib/site-qa/audit');
+const { applyAdvisory } = require('./lib/site-qa/pipeline');   // advisory pass: FUNC-008/009, Best Practices, Copy Review
 const { compute: computeQuality } = require('./lib/site-qa/score');
 const { RULES, WEIGHTS } = require('./lib/site-qa/rules/registry');
 const { renderReport, STYLE, TOTOP_JS } = require('./lib/site-qa/report');
@@ -1774,7 +1775,17 @@ async function apiRun(req, res) {
     const maxPages = Number.isFinite(+opts.maxPages) && +opts.maxPages >= 1 ? +opts.maxPages : 1;
     // Viewport picker (labels) — filter the render matrix like Visual Comparison; absent/empty ⇒ all.
     const viewports = Array.isArray(opts.viewports) && opts.viewports.length ? opts.viewports : null;
-    const data = await runAudit(url, { maxPages, render: opts.render !== false, renderSample: Math.min(maxPages, 25), viewports, screensDir: path.join(outDir, 'screenshots'), log: () => {}, progress });
+    // collectPages:true + applyAdvisory = the ADVISORY pass. Measured 2026-07-16: this server called
+    // runAudit() and NOTHING ELSE, so applyAdvisory() had zero callers and runAudit's collectPages
+    // defaulted false — meaning FUNC-008 (content-artifacts), FUNC-009 (spelling), Best Practices and
+    // Copy Review were ALL registered, tested, and NEVER EXECUTED in the app. A live sgen.com scan
+    // returned 11 suites with no 'best-practices' and no 'copy' at all. Same class as VIS-003, which
+    // shipped dead through 3.0.0/3.0.1 while the UI advertised it: a suite that never runs cannot fail
+    // a test, so 34/34 green said nothing about it.
+    // Advisory suites carry weight 0 and their rows are manual/0-deduction, so this cannot move the
+    // SGEN Quality Score — verified by golden parity, not by assertion.
+    const raw = await runAudit(url, { maxPages, render: opts.render !== false, renderSample: Math.min(maxPages, 25), viewports, screensDir: path.join(outDir, 'screenshots'), log: () => {}, progress, collectPages: true });
+    const data = applyAdvisory(raw);
     emit({ t: 'p', pct: 99, phase: 'writing report' });
     // CHANGE E: auto-compare this scan against the most recent PRIOR recorded scan for this host and
     // embed a "vs previous scan" panel near the top. loadLatestRecord() runs BEFORE recordScan() below,
