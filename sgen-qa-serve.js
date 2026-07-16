@@ -32,6 +32,13 @@ const { saveBaseline, loadResult, diff, listBaselines, recordScan, loadLatestRec
 const { renderCompare, renderComparePanel } = require('./lib/site-qa/report-compare');
 const { discoverPages } = require('./lib/migration-qa/crawl');
 const visualMatch = require('./lib/site-qa/visual-match');
+const { foldVisual } = require('./lib/site-qa/visual-match/fold');   // VIS-001/002/003 -> scorable suite
+// Per-tool weight map for Visual Comparison's Quality Score. Its VIS suite is weight-0 in the global
+// registry (advisory, by deliberate design — a redesign is SUPPOSED to change fonts/layout, so it must
+// not gate Site Audit). But Visual's OWN score is legitimate: over its own three checks, on its own
+// 0-100 scale, passed to computeQuality as opts.weights so the global registry invariant is untouched.
+// Rendered BESIDE the pixel/structure match % (Jerome 2026-07-16: "beside"), never replacing it.
+const VISUAL_WEIGHTS = { visual: 100 };
 const { render: renderVisual } = require('./lib/site-qa/report-visual');
 const annotate = require('./lib/site-qa/annotate');
 const { render: renderAnnotate } = require('./lib/site-qa/report-annotate');
@@ -1906,8 +1913,18 @@ async function apiVisual(req, res) {
     // cannot smuggle a third mode past the engine — no second copy of that rule lives here.
     const data = await visualMatch.run(ref, tgt, { maxPages, outDir, viewports: vps, axes: o.axes, warmLoads: o.warmLoads, mode: o.mode, log: () => {}, progress: (pct, phase) => { if (aborted) throw new Error('client-cancelled'); emit({ t: 'p', pct: Math.max(6, Math.min(96, pct || 0)), phase: phase || 'comparing' }); } });
     emit({ t: 'p', pct: 98, phase: 'writing report' });
+    // Quality Score BESIDE the match %. foldVisual turns the run into a scorable 'visual' suite
+    // (VIS-001/002/003); computeQuality with VISUAL_WEIGHTS + excludeRules gives a real 0-100 score and
+    // honours the "Checks included in the score" scope control — the same contract as Site Audit.
+    try {
+      const folded = foldVisual(data, { mode: o.mode });
+      const vq = computeQuality([{ key: 'visual', name: 'Visual', checks: folded.checks || [] }],
+        { weights: VISUAL_WEIGHTS, excludeRules: Array.isArray(o.excludeRules) ? o.excludeRules : [] });
+      data.quality = vq.overall;                 // null if every VIS check was excluded — render guards it
+      data.qualityCategories = vq.categories;
+    } catch (_) { /* scoring is additive — a fold/score error must never break the comparison itself */ }
     renderVisual(data, outDir);
-    emit({ t: 'done', ok: true, id, overall: data.overall, pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp, mode: data.mode }); res.end();
+    emit({ t: 'done', ok: true, id, overall: data.overall, quality: data.quality, pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp, mode: data.mode }); res.end();
   } catch (e) { if (!aborted) emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
 }
 
