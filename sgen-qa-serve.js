@@ -74,6 +74,10 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.3.1', date: '2026-07-17', notes: [
+    'Site Comparison no longer fails silently when it cannot reach a site. If the reference or target returns a block (e.g. HTTP 403 from a firewall) or cannot be connected to, the run now reports the reason — "the reference site blocked this scanner (HTTP 403) — ask the site owner to allowlist it" — instead of an empty result with no explanation.',
+    'This does not grant access; it explains the failure. A blocked live site still needs its owner to allowlist this scanner\'s IP.'
+  ] },
   { version: '4.3.0', date: '2026-07-17', notes: [
     'Visual Comparison now grades every difference by severity and shows a Build Fidelity score: missing content counts most, a design or background change less, a spacing shift least, and a genuine improvement not at all.',
     'Background images are now compared directly, so a changed or dropped background is caught even in Redesign mode — previously only the pixel pass could see it, and Redesign turns that off.',
@@ -1956,6 +1960,9 @@ async function apiVisual(req, res) {
     try { fs.writeFileSync(path.join(outDir, 'visual.json'), JSON.stringify(data)); } catch (_) {}
     data.id = id;                              // the run id the report POSTs to /api/visual-rerate
     renderVisual(data, outDir);
+    // An empty comparison (0 pairs) is a FAILURE with a reason, not a silent success — a blocked or
+    // unreachable reference/candidate would otherwise emit ok:true with pairs:0 and no explanation.
+    if (data.diagnostic && data.diagnostic.ok === false) { emit({ t: 'done', ok: false, id, error: data.diagnostic.message, reason: data.diagnostic.reason, pairs: data.pairs || 0 }); res.end(); return; }
     emit({ t: 'done', ok: true, id, overall: data.overall, quality: data.quality,
       fidelity: data.graded ? data.graded.score : null,
       tiers: data.graded ? data.graded.counts : null, profile: data.graded ? data.graded.profile : null,
