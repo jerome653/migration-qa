@@ -32,7 +32,8 @@ const { saveBaseline, loadResult, diff, listBaselines, recordScan, loadLatestRec
 const { renderCompare, renderComparePanel } = require('./lib/site-qa/report-compare');
 const { discoverPages } = require('./lib/migration-qa/crawl');
 const visualMatch = require('./lib/site-qa/visual-match');
-const { foldVisual } = require('./lib/site-qa/visual-match/fold');   // VIS-001/002/003 -> scorable suite
+const { foldVisual } = require('./lib/site-qa/visual-match/fold');   // VIS-001/002/003 -> scorable suite (pipeline/timeline)
+const { grade: gradeVisual, PROFILE_NAMES: VIS_PROFILES } = require('./lib/site-qa/visual-match/grade'); // v5 severity-graded fidelity + tiers
 // Per-tool weight map for Visual Comparison's Quality Score. Its VIS suite is weight-0 in the global
 // registry (advisory, by deliberate design — a redesign is SUPPOSED to change fonts/layout, so it must
 // not gate Site Audit). But Visual's OWN score is legitimate: over its own three checks, on its own
@@ -73,6 +74,12 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.3.0', date: '2026-07-17', notes: [
+    'Visual Comparison now grades every difference by severity and shows a Build Fidelity score: missing content counts most, a design or background change less, a spacing shift least, and a genuine improvement not at all.',
+    'Background images are now compared directly, so a changed or dropped background is caught even in Redesign mode — previously only the pixel pass could see it, and Redesign turns that off.',
+    'New pre-check controls: a Strictness dial (Strict / Balanced / Lenient) and "What to compare" toggles (pixel / background / typography).',
+    'After a run you can keep or ignore any finding and Re-rate — a recorded server re-run recomputes the real status of the build without re-scanning.'
+  ] },
   { version: '4.2.0', date: '2026-07-16', notes: [
     'Visual Comparison now shows a Quality Score beside the match percentage — a real 0-100 score over its own checks, so a comparison reads like the other tools, not just a similarity number.',
     'The match percentage is unchanged and still the headline; the Quality Score sits next to it, it does not replace it.',
@@ -747,6 +754,11 @@ function appPage() {
               <div class="grp"><div class="glab">Comparison mode <span class="help" tabindex="0">?<span class="tip"><b>Comparison mode</b>The pixel diff only means something when the two sites are meant to look the SAME. <b style="display:inline">Like-for-like</b> = same design on a new platform: pixel diff on and scored. <b style="display:inline">Redesign</b> = the new site is meant to look different: pixel diff off, and the match score is structural only — what the old site had vs what the new build still has.<em>Wrong mode on a redesign = a page of differences that are all intentional.</em></span></span></div>
                 <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
                   <select id="v-mode" style="flex:1;min-width:0;max-width:340px"><option value="like-for-like">Like-for-like replatform (pixel diff on)</option><option value="redesign">Redesign (pixel diff off — structure only)</option></select></div></div>
+              <div class="grp"><div class="glab">Strictness <span class="help" tabindex="0">?<span class="tip"><b>Strictness</b>How hard the build-fidelity score penalises differences. Missing content always counts most; this dial scales spacing + design-defect penalties. Re-selectable after a run from the report.</span></span></div>
+                <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
+                  <select id="v-profile" style="flex:1;min-width:0;max-width:340px"><option value="strict">Strict - small differences count more</option><option value="balanced" selected>Balanced (recommended)</option><option value="lenient">Lenient - only big differences count</option></select></div></div>
+              <div class="grp"><div class="glab">What to compare <span class="help" tabindex="0">?<span class="tip"><b>What to compare</b>The comparison always checks structure (element presence, position, text). These are the optional extra sensors. <b style="display:inline">Background images</b> catches a changed or dropped CSS background even in Redesign mode. <b style="display:inline">Pixel diff</b> only runs in Like-for-like mode. <b style="display:inline">Typography</b> reports font-family drift.<em>Turn one off to silence a noisy axis for this scan.</em></span></span></div><div class="chips" id="v-ax">
+                <label class="chip"><input type="checkbox" value="pixel" checked>Pixel diff</label><label class="chip"><input type="checkbox" value="background" checked>Background images</label><label class="chip"><input type="checkbox" value="typography" checked>Typography</label></div></div>
               <div class="grp"><div class="glab">Scope <span class="help" tabindex="0">?<span class="tip"><b>Scope</b>How many pages to compare. <b style="display:inline">Full site</b> discovers additional linked pages — useful for audits, but may surface non-canonical URLs (pagination, query variants).<em>Example: Single page for a fast homepage check.</em></span></span></div>
                 <div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">
                   <select id="v-scope" style="flex:1;min-width:0;max-width:340px"><option value="single">Single page (homepage)</option><option value="multiple">Multiple pages (up to max)</option><option value="sitemap">Sitemap-driven</option><option value="full">Full site</option></select>
@@ -1009,9 +1021,13 @@ function appPage() {
         showReport('a','/report/'+m.id,'report');});}
 
     // 2 Visual Comparison
+    // Three-axis compare object {pixel,background,typography} read from the #v-ax checkboxes. A key with
+    // no checkbox defaults ON — matching the engine's "absent / all-true => today's behaviour" axes
+    // contract, so a build without a #v-ax control still compares byte-for-byte as it did before.
+    function axState(){var host=$('v-ax'),o={};['pixel','background','typography'].forEach(function(k){var cb=host?host.querySelector('input[value="'+k+'"]'):null;o[k]=cb?cb.checked:true;});return o;}
     function runVisual(){var ref=$('v-ref').value.trim(),tgt=$('v-tgt').value.trim();if(!ref||!tgt){$('v-status').textContent='Enter both Reference and Target URLs.';return;}
       var vps=checked('v-vps').map(function(w){return VPMAP[w]});
-      stream('/api/visual',{ref:ref,target:tgt,mode:$('v-mode').value,scope:$('v-scope').value,maxPages:+$('v-max').value||1,viewports:vps,axes:checked('v-ax'),warmLoads:+$('v-warm').value||3},'v',function(m){
+      stream('/api/visual',{ref:ref,target:tgt,mode:$('v-mode').value,profile:$('v-profile')?$('v-profile').value:'balanced',scope:$('v-scope').value,maxPages:+$('v-max').value||1,viewports:vps,axes:axState(),warmLoads:+$('v-warm').value||3,excludeIds:[]},'v',function(m){
         if(!m.ok){$('v-status').textContent='Comparison failed: '+(m.error||'unknown');return;}
         $('v-status').innerHTML='Done — overall match '+m.overall+'% · '+m.pairs+' page(s) · '+m.viewports+' viewport(s)'+(m.sharp?'':' · (pixel diff off: sharp missing)');
         showReport('v','/visual/'+m.id,'visual report');});}
@@ -1234,6 +1250,7 @@ function appPage() {
         // here (rule 1 above). FACTORY is the authored DOM, and #v-mode's first <option> is
         // like-for-like, so the shipped default is today's behaviour: pixel pass ON, unchanged.
         {k:'mode',t:'sel',bind:'v-mode',label:'Comparison mode',opts:[['like-for-like','Like-for-like replatform (pixel diff on)'],['redesign','Redesign (pixel diff off — structure only)']],hint:'The pixel diff only answers a question worth asking when the two sites are supposed to look the SAME. Like-for-like = same design, new platform: the diff is on and scored. Redesign = the new site is meant to look different: the diff is switched off (it would only measure the intent) and the match score becomes structural only — what the old site had vs what the new build still has. Both sides are still screenshotted either way.'},
+        {k:'profile',t:'sel',bind:'v-profile',label:'Strictness',opts:[['balanced','Balanced (recommended)'],['strict','Strict - small differences count more'],['lenient','Lenient - only big differences count']],hint:'How hard the build-fidelity score penalises differences. Missing content always counts most; this dial scales spacing + design-defect penalties. Re-selectable after a run from the report.'},
         {k:'scope',t:'sel',bind:'v-scope',label:'Page scope',opts:[['single','Single page (homepage)'],['multiple','Multiple pages (up to max)'],['sitemap','Sitemap-driven'],['full','Full site']],hint:'How many pages to pair up and compare. Full site discovers additional linked pages and may surface non-canonical URLs.'},
         {k:'maxPages',t:'num',bind:'v-max',min:1,max:200,label:'Max pages',hint:'Upper bound on paired pages for the Multiple / Sitemap / Full scopes.'},
         {k:'warmLoads',t:'num',bind:'v-warm',min:1,max:5,label:'Warm-up loads',hint:'Load each page this many times before screenshotting so lazy-loaded / CDN-cold assets are in — fewer false diffs. 1 = no warm-up.'},
@@ -1818,6 +1835,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/annotate-pdf-file') return apiAnnotatePdfFile(res, u);
     if (req.method === 'POST' && p === '/api/run') return await apiRun(req, res);
     if (req.method === 'POST' && p === '/api/visual') return await apiVisual(req, res);
+    if (req.method === 'POST' && p === '/api/visual-rerate') return await apiVisualRerate(req, res);
     if (req.method === 'POST' && p === '/api/certify') return await apiCertify(req, res);
     if (req.method === 'POST' && p === '/api/inspect') return await apiInspect(req, res);
     return send(res, 404, 'text/plain', 'not found');
@@ -1928,9 +1946,51 @@ async function apiVisual(req, res) {
       data.quality = vq.overall;                 // null if every VIS check was excluded — render guards it
       data.qualityCategories = vq.categories;
     } catch (_) { /* scoring is additive — a fold/score error must never break the comparison itself */ }
+    // v5 — severity-graded reference-fidelity score + four-tier findings (missing/defect/spacing/improvement).
+    // Additive + guarded: a grader error must never break the comparison. `profile` = the strictness dial;
+    // `excludeIds` = findings the operator chose to ignore (only sent on a re-run, empty on a first scan).
+    try {
+      data.graded = gradeVisual(data, { profile: o.profile, excludeIds: Array.isArray(o.excludeIds) ? o.excludeIds : [] });
+    } catch (_) { data.graded = null; }
+    // Persist the raw run so /api/visual-rerate can re-grade (keep/ignore) WITHOUT re-scanning the sites.
+    try { fs.writeFileSync(path.join(outDir, 'visual.json'), JSON.stringify(data)); } catch (_) {}
+    data.id = id;                              // the run id the report POSTs to /api/visual-rerate
     renderVisual(data, outDir);
-    emit({ t: 'done', ok: true, id, overall: data.overall, quality: data.quality, pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp, mode: data.mode }); res.end();
+    emit({ t: 'done', ok: true, id, overall: data.overall, quality: data.quality,
+      fidelity: data.graded ? data.graded.score : null,
+      tiers: data.graded ? data.graded.counts : null, profile: data.graded ? data.graded.profile : null,
+      pairs: data.pairs, viewports: (data.viewports || []).length, sharp: data.sharp, mode: data.mode }); res.end();
   } catch (e) { if (!aborted) emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
+}
+
+// Post-check RE-RATE — a recorded server re-run of the SCORING ONLY (no re-scan). Honors report.js's design
+// law that the browser must never silently re-score: a keep/ignore decision becomes a recorded new report
+// version. Body: { id, profile?, excludeIds:[] }. Reloads the stored run, re-grades over the kept set,
+// re-renders the report, appends the adjustment to visual.json (rerates[]), returns the new fidelity+tiers.
+async function apiVisualRerate(req, res) {
+  let o; try { o = JSON.parse(await readBody(req) || '{}'); } catch (e) { return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad json' })); }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) o = {};
+  const rawId = String(o.id || '');
+  if (!/^[A-Za-z0-9_-]+$/.test(rawId)) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'bad or missing run id' })); // no path traversal
+  const outDir = path.join(RUNS, rawId);
+  const jsonPath = path.join(outDir, 'visual.json');
+  if (!fs.existsSync(jsonPath)) return send(res, 404, 'application/json', JSON.stringify({ ok: false, error: 'run not found (visual.json missing) — re-run the comparison' }));
+  let data; try { data = JSON.parse(fs.readFileSync(jsonPath, 'utf8')); } catch (e) { return send(res, 500, 'application/json', JSON.stringify({ ok: false, error: 'stored run unreadable' })); }
+  const excludeIds = Array.isArray(o.excludeIds) ? o.excludeIds.map(String) : [];
+  const profile = o.profile || (data.graded && data.graded.profile);
+  const before = data.graded ? data.graded.score : null;
+  let graded; try { graded = gradeVisual(data, { profile, excludeIds }); }
+  catch (e) { return send(res, 500, 'application/json', JSON.stringify({ ok: false, error: 're-grade failed: ' + (e && e.message || e) })); }
+  data.graded = graded;
+  // A re-rate is a RECORDED event, never a silent overwrite: keep the before/after + the operator's decision.
+  data.rerates = Array.isArray(data.rerates) ? data.rerates : [];
+  const at = new Date().toISOString();
+  data.rerates.push({ at, profile: graded.profile, ignored: excludeIds.length, before, after: graded.score });
+  data.adjusted = { profile: graded.profile, ignored: excludeIds.length, before, after: graded.score, at };
+  try { fs.writeFileSync(jsonPath, JSON.stringify(data)); } catch (_) {}
+  try { renderVisual(data, outDir); } catch (_) {}
+  return send(res, 200, 'application/json', JSON.stringify({ ok: true, id: rawId, fidelity: graded.score, before, profile: graded.profile,
+    tiers: graded.tiers, counts: graded.counts, findings: graded.findings }));
 }
 
 // 3 — Post-Deployment Check (frozen migration-certification pipeline; mirrors sgen-qa-certify.js orchestration)
