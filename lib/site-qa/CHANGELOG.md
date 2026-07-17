@@ -40,6 +40,11 @@
 
 ---
 
+## [4.3.4] — 2026-07-17
+### Changed — Site Audit report: one overall score, per-section Score dashboard removed — Rep
+- The header ring now shows the overall **Quality score (0–100)** as the single headline number, replacing the "% checks passing" reading; the arc gauges that score. Falls back to the checks-passing % on older scans that carry no quality score.
+- The per-section **"Score dashboard / per-section summary"** has been removed, including its "🔴 Fix first" launch-blocker shortcut list. The launch verdict + readiness badge remain in the header; every finding is still listed in full in the flat Issues section and the per-section detail. The last-scan comparison (Fixed / Regressed / New / Resolved) and Suite trend are unchanged.
+
 ## [4.3.3] — 2026-07-17
 ### Added — Score dashboard lists each section's issues as clickable rows — Rep
 - Each per-section score card now lists its open issues inline as clickable rows (status, name, occurrence count) instead of a single "N issues →" summary chip. Every row deep-links to that issue's per-section detail (evidence, occurrences, element locators). Restores the pre-3.0.0 inline list, capped at 8 rows/card with a "+N more →" overflow to the flat Issues section.
