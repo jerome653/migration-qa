@@ -40,6 +40,10 @@
 
 ---
 
+## [4.3.3] — 2026-07-17
+### Added — Score dashboard lists each section's issues as clickable rows — Rep
+- Each per-section score card now lists its open issues inline as clickable rows (status, name, occurrence count) instead of a single "N issues →" summary chip. Every row deep-links to that issue's per-section detail (evidence, occurrences, element locators). Restores the pre-3.0.0 inline list, capped at 8 rows/card with a "+N more →" overflow to the flat Issues section.
+
 ## 2026-07-09 — V2 Phase 1  (Developer-first platform: contract · providers · +32 rules) — E 2.3.0 · R 1.9.0 · Rep 1.2.0
 ### Added — platform (the durable foundation)
 - **Finding Contract v1** (ADR-0003, `contract.js`, `schemas/finding-contract.schema.json`): one canonical

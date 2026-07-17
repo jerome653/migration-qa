@@ -74,6 +74,10 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.3.3', date: '2026-07-17', notes: [
+    'The Score dashboard now lists the issues for each section right on its card. Every failing or warning check appears as its own row, with how many times it occurs, instead of only a "N issues" count.',
+    'Click any issue to jump straight to its full detail below (evidence, every occurrence, and the element locators), so you go from the score to the exact problem in one click.'
+  ] },
   { version: '4.3.2', date: '2026-07-17', notes: [
     'Site Audit now lists the pages it audited. The report shows a "Pages audited" section — which pages were checked (200 + HTML), which were reached but could not be audited (with their status, e.g. 404/403), and which were found in the sitemap but skipped because the crawl hit the max-pages cap.',
     'So you can see coverage at a glance ("5 of 17 pages") and raise Max pages if pages you care about were not reached.'
