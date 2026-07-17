@@ -74,6 +74,10 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.3.2', date: '2026-07-17', notes: [
+    'Site Audit now lists the pages it audited. The report shows a "Pages audited" section — which pages were checked (200 + HTML), which were reached but could not be audited (with their status, e.g. 404/403), and which were found in the sitemap but skipped because the crawl hit the max-pages cap.',
+    'So you can see coverage at a glance ("5 of 17 pages") and raise Max pages if pages you care about were not reached.'
+  ] },
   { version: '4.3.1', date: '2026-07-17', notes: [
     'Site Comparison no longer fails silently when it cannot reach a site. If the reference or target returns a block (e.g. HTTP 403 from a firewall) or cannot be connected to, the run now reports the reason — "the reference site blocked this scanner (HTTP 403) — ask the site owner to allowlist it" — instead of an empty result with no explanation.',
     'This does not grant access; it explains the failure. A blocked live site still needs its owner to allowlist this scanner\'s IP.'
