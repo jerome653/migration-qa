@@ -74,6 +74,14 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.4.0', date: '2026-07-20', notes: [
+    'The report is ONE list. "Issues" and "Passed tests & per-section detail" were two tables showing the same checks — you read one to find a problem and the other to understand it, and "detail →" was the jump between them. Now: one list, filtered by All / Blockers / Major / Polish / Passed / Review, grouped by section.',
+    'Every row expands where it sits. Click a finding and its page, observed value, measurement and every occurrence (with element selectors) open in place — the page does not move under you and there is nothing to scroll to any more.',
+    'Sections collapse. A section with something open starts expanded; a clean section starts shut, so passed checks stop burying the failures. Open or close any section and it stays that way while you filter.',
+    'Copy summary — the whole report, or one section, as Markdown ready to paste into a ticket or a handover. Per-finding "Copy for dev" is unchanged.',
+    'PASSED and REVIEW are separate filters on purpose. A manual check and one that never ran are not passes, and putting them under "Passed" would undo in the UI what the scoring model spent a release fixing.',
+    'Ignore is unchanged and still a view filter only: ignored rows are struck through rather than removed, the reduced-view notice still names how many you hid and whether any was a launch blocker, and the score, tally and launch verdict do not move.',
+  ] },
   { version: '4.3.6', date: '2026-07-20', notes: [
     'Switching a section OFF in Settings now switches it off. Untick a whole section (SEO, Security, …) and it is no longer crawled, no longer appears in the Issues list or the per-section detail, and no longer counts toward the tally or the launch gate. Previously "off" only removed it from the Quality score — the section still ran and still filled the report, which is not what unticking it says.',
     'Unticking SOME of a section\'s checks still means what it always did: the section runs and reports, and only the score leaves those checks out. Section off = did not run · single check off = ran, not counted. The report states which, by name, above the score.',
