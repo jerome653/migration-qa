@@ -74,6 +74,14 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.3.6', date: '2026-07-20', notes: [
+    'Switching a section OFF in Settings now switches it off. Untick a whole section (SEO, Security, …) and it is no longer crawled, no longer appears in the Issues list or the per-section detail, and no longer counts toward the tally or the launch gate. Previously "off" only removed it from the Quality score — the section still ran and still filled the report, which is not what unticking it says.',
+    'Unticking SOME of a section\'s checks still means what it always did: the section runs and reports, and only the score leaves those checks out. Section off = did not run · single check off = ran, not counted. The report states which, by name, above the score.',
+    'A section that did not run is reported as UNKNOWN, never as clean — the notice above the score names it, and the score drops its weight rather than banking it as a pass.',
+    '"Max pages" now samples one of each PAGE TYPE instead of taking the sitemap\'s own order. Scanning 5 pages of a blog-heavy site returned the homepage plus four blog posts — four looks at one template and no pillar, service or contact page. It now walks the homepage first, then a page from each different section before a second of any, so a small scan describes the site instead of one corner of it. Scans of the whole site fetch exactly the same pages as before.',
+    'Repeat scans of the same site now crawl in the same order every time. Sitemap children were fetched concurrently and whichever answered first filled the cap, so two runs of the same site could audit different pages.',
+    'Fixed: excluding checks from the score re-inflated it. Any run with a custom check selection silently reverted to crediting checks that never ran (the missing axe-core scan, a render pass that failed) as if they had passed. Selecting fewer checks could raise the number — it can only narrow it now.',
+  ] },
   { version: '4.3.5', date: '2026-07-20', notes: [
     'Every issue now shows its evidence where you read it. Click any row in the Issues list to expand the page it was found on (or the scope, when a finding covers the whole site), what was observed, the measured value, and every occurrence with its element selector and a copy-ready dev ticket.',
     'Before this, a row gave you the rule name and a count — "4 occurrences" — and you had to jump to the per-section detail to find out anything about it. The evidence was always in the report; the list simply was not showing it. "detail →" still works exactly as before.',
@@ -351,7 +359,14 @@ function buildDiagnostics() {
 // without passing the notice), it names how many hidden checks are OPEN DEFECTS, and it says plainly
 // which numbers are scoped and which are not. Fail closed, disclose always.
 const hEsc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-function scopeFacts(data, excludedIds) {
+// `skippedKeys` = suites the operator switched OFF, which audit.js did not run at all. They are a
+// different and STRONGER claim than a de-scoped rule, and the panel must not blur the two: a
+// de-scoped check ran and is still in the report; a skipped section was never measured, so the
+// verdict, the tally and the launch gate no longer cover it either. Saying "the verdict still counts
+// every check" while a section sat out would be exactly the reassuring falsehood this panel exists
+// to prevent.
+function scopeFacts(data, excludedIds, skippedKeys) {
+  const skipped = SCOPE_CATALOG.suites.filter((s) => (skippedKeys || []).includes(s.key));
   const excluded = [...new Set(excludedIds || [])].filter((id) => SCOPE_RULE_IDS.has(id));
   // Which rules actually fired in THIS run — so the notice can say "and 3 of them are open defects"
   // rather than the toothless "some checks were excluded".
@@ -368,16 +383,36 @@ function scopeFacts(data, excludedIds) {
     const all = SCOPE_CATALOG.rules.filter((r) => r.suite === s.key).length;
     return all > 0 && (outBySuite[s.key] || []).length === all;
   });
-  return { excluded, total: SCOPE_CATALOG.rules.length, openHidden, blockersHidden, fullyOut, outBySuite, verdict: data.verdict };
+  // Checks belonging to a skipped section are counted as not-covered too — the operator narrowed the
+  // audit by that much, and the headline percentage has to reflect the whole narrowing, not just the
+  // part that happened to run.
+  const skippedRuleCount = SCOPE_CATALOG.rules.filter((r) => skipped.some((s) => s.key === r.suite)).length;
+  return { excluded, skipped, skippedRuleCount, total: SCOPE_CATALOG.rules.length, openHidden, blockersHidden, fullyOut, outBySuite, verdict: data.verdict };
 }
 function buildScopePanel(f) {
-  if (!f.excluded.length) return '';
-  const pct = Math.round(f.excluded.length / f.total * 100);
+  if (!f.excluded.length && !f.skipped.length) return '';
+  const pct = Math.round((f.excluded.length + f.skippedRuleCount) / f.total * 100);
   const openLine = f.openHidden.length
     ? `<b style="color:var(--fail)">${f.openHidden.length} of the excluded checks ${f.openHidden.length === 1 ? 'is an open defect' : 'are open defects'} on this site</b>${f.blockersHidden.length ? `, <b style="color:var(--fail)">including ${f.blockersHidden.length} launch blocker${f.blockersHidden.length > 1 ? 's' : ''}</b>` : ''} — real ${f.openHidden.length === 1 ? 'problem' : 'problems'} this score does not see`
     : 'none of the excluded checks are currently failing on this site';
+  // The skipped sections get their own row and their own verb — "not run", never "excluded". Whatever
+  // they would have found on this site is UNKNOWN, and the one thing the report must not imply is
+  // that nobody looked because there was nothing there.
+  const skipLine = f.skipped.length
+    ? `<div class="sc-row"><span class="sc-k">Sections NOT RUN</span><span class="sc-v"><b style="color:var(--fail)">${f.skipped.map((s) => hEsc(s.name)).join(' · ')}</b> — switched off in settings, so ${f.skipped.length === 1 ? 'it' : 'they'} never executed on this site. No pages were checked for ${f.skipped.length === 1 ? 'it' : 'them'} and nothing about ${f.skipped.length === 1 ? 'it' : 'them'} appears anywhere below: not in the Issues list, not in the per-section detail, not in the tally. Whatever ${f.skipped.length === 1 ? 'it' : 'they'} would have found here is <b style="color:var(--ink)">unknown, not clean</b>.</span></div>` : '';
   const suiteLine = f.fullyOut.length
-    ? `<div class="sc-row"><span class="sc-k">Sections switched off entirely</span><span class="sc-v">${f.fullyOut.map((s) => hEsc(s.name) + ' <i>(weight ' + s.weight + ')</i>').join(' · ')}</span></div>` : '';
+    ? `<div class="sc-row"><span class="sc-k">Sections de-scoped from the score</span><span class="sc-v">${f.fullyOut.map((s) => hEsc(s.name) + ' <i>(weight ' + s.weight + ')</i>').join(' · ')} — these <i>ran</i> and still appear below; only the score omits them.</span></div>` : '';
+  // Says out loud what compare.js now enforces: a narrowed run is neither diffed nor used as the next
+  // baseline. Without this the omission of the familiar "vs previous scan" panel would just look like
+  // a missing feature, and the reason it is missing is the whole point.
+  const trendLine = f.skipped.length
+    ? `<div class="sc-row"><span class="sc-k">Not compared, not trended</span><span class="sc-v">The "vs previous scan" comparison is omitted from this report, and this run will not be used as the baseline for the next one. A run with sections switched off covers less than a full scan, so diffing the two would report every check in the missing ${f.skipped.length === 1 ? 'section' : 'sections'} as newly fixed — a settings toggle inventing progress. Re-run with everything on to move the trend.</span></div>` : '';
+  // The quality number renormalises over the sections that ran, so switching off a section that was
+  // scoring BELOW the site average makes the remaining average rise. That is arithmetic, not a bug,
+  // and it is exactly why the number must not be read as a site score or compared with one — hence
+  // the header, this row, and the trend lockout above.
+  const renormLine = f.skipped.length
+    ? `<div class="sc-row"><span class="sc-k">Reading the number</span><span class="sc-v">Quality is the average across the sections that <b style="color:var(--ink)">ran</b>, so it can read HIGHER than a full scan of the same site purely because a weak section sat out. It is not comparable to a whole-site score and must not be quoted as one.</span></div>` : '';
   const ids = f.openHidden.slice(0, 12).map((id) => { const r = ruleById.get(id); return hEsc(id) + (r ? ' ' + hEsc(r.title) : ''); });
   return `<style>
   .qa-scope{border:1px solid var(--fail);border-left:5px solid var(--fail);background:var(--fail-bg);border-radius:var(--radius);padding:16px 18px;margin:0 0 18px;display:flex;gap:14px;align-items:flex-start}
@@ -395,9 +430,12 @@ function buildScopePanel(f) {
     <div class="sc-i">&#9888;</div>
     <div style="min-width:0">
       <b class="sc-h">PARTIAL AUDIT — the quality score below does not describe the whole site.</b>
-      <p><b style="color:var(--ink)">${f.excluded.length}</b> of ${f.total} scorable checks (<b style="color:var(--ink)">${pct}%</b>) were excluded from scoring by the operator, so the Quality score is the share of resolved risk across the <i>selected checks alone</i>. ${openLine}.</p>
-      <div class="sc-row"><span class="sc-k">Scoped to the selection</span><span class="sc-v">The <b style="color:var(--ink)">Quality dashboard</b> (overall + per-suite 0–100). Excluding a check removes its risk from the numerator <b style="color:var(--ink)">and</b> the denominator, so an excluded section drops out of the weighted mean rather than scoring 100.</span></div>
-      <div class="sc-row"><span class="sc-k">NOT scoped — whole site</span><span class="sc-v">The <b style="color:var(--ink)">${hEsc(String((f.verdict || 'PASS/FAIL verdict')))}</b> verdict, the checks-passing ring, the tallies and the launch-readiness gate all still count <b style="color:var(--ink)">every</b> check that ran. De-scoping cannot buy a pass — only a higher quality number.</span></div>
+      <p><b style="color:var(--ink)">${f.excluded.length + f.skippedRuleCount}</b> of ${f.total} scorable checks (<b style="color:var(--ink)">${pct}%</b>) are not covered by this report — ${f.skippedRuleCount ? `<b style="color:var(--ink)">${f.skippedRuleCount}</b> in sections that were <b style="color:var(--fail)">not run at all</b>${f.excluded.length ? `, and <b style="color:var(--ink)">${f.excluded.length}</b> that ran but were excluded from scoring` : ''}` : `<b style="color:var(--ink)">${f.excluded.length}</b> excluded from scoring by the operator`}. The Quality score is the share of resolved risk across the <i>remaining checks alone</i>. ${openLine}.</p>
+      ${skipLine}
+      ${renormLine}
+      ${trendLine}
+      <div class="sc-row"><span class="sc-k">Scoped to the selection</span><span class="sc-v">The <b style="color:var(--ink)">Quality dashboard</b> (overall + per-suite 0–100). A check that is excluded — or that never ran — loses its risk from the numerator <b style="color:var(--ink)">and</b> the denominator, so its section drops out of the weighted mean rather than scoring 100. Narrowing the audit cannot raise the number by hiding a failure.</span></div>
+      <div class="sc-row"><span class="sc-k">What the verdict covers</span><span class="sc-v">The <b style="color:var(--ink)">${hEsc(String((f.verdict || 'PASS/FAIL verdict')))}</b> verdict, the checks-passing ring, the tallies and the launch-readiness gate count every check that <b style="color:var(--ink)">ran</b>${f.skipped.length ? ` — which no longer means every check the tool has, because ${f.skipped.length === 1 ? 'a section was' : f.skipped.length + ' sections were'} switched off. <b style="color:var(--fail)">A pass here is a pass on what was run, not on this site.</b>` : '. De-scoping cannot buy a pass — only a higher quality number.'}</span></div>
       ${suiteLine}
       ${ids.length ? `<div class="sc-row"><span class="sc-k">Open defects hidden from the score</span><span class="sc-v"><code>${ids.join('</code> · <code>')}</code>${f.openHidden.length > 12 ? ' <i>+' + (f.openHidden.length - 12) + ' more</i>' : ''}</span></div>` : ''}
       <div class="sc-row"><span class="sc-k">If you are sending this on</span><span class="sc-v">This notice must travel with the report. A reduced-scope score is not a site pass, and the PDF export carries this panel.</span></div>
@@ -1039,6 +1077,10 @@ function appPage() {
         var q=(m.quality!=null?' · quality '+m.quality:'');
         // A de-scoped run must never read as a whole one, here either — not just in the report.
         var sc=(m.scopedOut?' · <b style="color:var(--brand)">PARTIAL: quality scored on '+((m.scorableTotal||0)-m.scopedOut)+'/'+m.scorableTotal+' checks</b>':'');
+        // A section that did not run is named in the status line, not folded into the check count. The
+        // operator switched it off minutes ago and will still be told, because this line is the last
+        // thing read before the report is forwarded to someone who did NOT switch it off.
+        if(m.notRunSuites&&m.notRunSuites.length)sc+=' · <b style="color:var(--fail)">NOT RUN: '+m.notRunSuites.join(', ')+'</b>';
         $('a-status').innerHTML='Done — '+m.verdict+' · score '+m.score+'%'+q+' · pass '+m.tally.pass+' / warn '+m.tally.warn+' / fail '+m.tally.fail+' / manual '+m.tally.manual+' · saved to history'+sc;
         var cmp='';if(m.comparison)cmp=' · <a href="/compare/'+m.id+'" target="_blank">open comparison ↗</a>';$('a-link').innerHTML='<a href="/report/'+m.id+'" target="_blank">↗ Open full report</a>'+cmp;
         showReport('a','/report/'+m.id,'report');});}
@@ -1261,7 +1303,7 @@ function appPage() {
         {k:'maxPages',t:'num',bind:'a-max',min:1,max:500,label:'Max pages to crawl',hint:'1 = homepage only; higher follows the sitemap + internal links up to this cap. Sent to the scan as maxPages.'},
         {k:'render',t:'bool',bind:'a-render',label:'Browser render pass',hint:'Loads each page in a real headless browser for axe-core accessibility, Core Web Vitals, full-page screenshots and the Firefox + WebKit pass. Off = a faster static-only scan that cannot see any of those.'},
         {k:'viewports',t:'vps',bind:'a-vps',label:'Viewports swept',hint:'The responsive sweep. Devices are really emulated (touch, pixel density, mobile UA); the boundary probes are width only. Fewer = faster.'},
-        {k:'scope',t:'scope',label:'Checks included in the score',hint:'Untick a check and the Quality score is recalculated across what is left ALONE — the excluded risk leaves the total, not just the deductions.'},
+        {k:'scope',t:'scope',label:'Sections and checks to run',hint:'Untick a WHOLE section and it does not run at all — nothing about it appears in the report, and its result is unknown rather than clean. Untick individual checks and the section still runs and still reports; only the Quality score leaves them out, with their risk removed from the total as well as the deductions. Either way the report says on its face what was left out.'},
         // perRun: rendered here for discoverability, but NOT a setting. Excluded from the gear's custom
         // dot, from "Save as default", and from the load path. Making it a normal field would persist the
         // name server-side (saveAsDefault POSTs DRAFT) — the same silent-overwrite bug as the old
@@ -1894,7 +1936,19 @@ async function apiRun(req, res) {
     // a test, so 34/34 green said nothing about it.
     // Advisory suites carry weight 0 and their rows are manual/0-deduction, so this cannot move the
     // SGEN Quality Score — verified by golden parity, not by assertion.
-    const raw = await runAudit(url, { maxPages, render: opts.render !== false, renderSample: Math.min(maxPages, 25), viewports, screensDir: path.join(outDir, 'screenshots'), log: () => {}, progress, collectPages: true });
+    // ---- SKIP vs SCOPE: unticking a WHOLE section switches it off; unticking some of its checks
+    // only de-scopes the score. Derived from the same tree the operator already uses, so there is no
+    // second control to keep in sync: a suite whose every scorable rule is unticked is one the
+    // operator switched off, and audit.js does not run it at all (see normalizeSkip there).
+    // Reported 2026-07-20: "I disabled SEO on scan but it was still included" — it was, because
+    // excludeRules only ever reached the SCORE. This is the half that was missing.
+    const wantExcluded = (Array.isArray(opts.excludeRules) ? opts.excludeRules : [])
+      .filter((id) => typeof id === 'string' && SCOPE_RULE_IDS.has(id));
+    const wantSet = new Set(wantExcluded);
+    const skipSuites = SCOPE_CATALOG.suites
+      .map((s) => s.key)
+      .filter((k) => { const rs = SCOPE_CATALOG.rules.filter((r) => r.suite === k); return rs.length > 0 && rs.every((r) => wantSet.has(r.id)); });
+    const raw = await runAudit(url, { maxPages, render: opts.render !== false, renderSample: Math.min(maxPages, 25), viewports, screensDir: path.join(outDir, 'screenshots'), log: () => {}, progress, collectPages: true, skipSuites });
     const data = applyAdvisory(raw);
     emit({ t: 'p', pct: 99, phase: 'writing report' });
     // CHANGE E: auto-compare this scan against the most recent PRIOR recorded scan for this host and
@@ -1902,9 +1956,13 @@ async function apiRun(req, res) {
     // so it returns the previous scan (this one is not in history yet). First scan -> subtle empty state.
     let comparePanel = '';
     try {
-      const prior = loadLatestRecord(data.host);
-      comparePanel = (prior && prior.data)
-        ? renderComparePanel(diff(prior.data, data), { priorCount: prior.count })
+      // A narrowed run is not diffed at all. Its suite list is shorter, so every check of a
+      // switched-off section would read as "fixed" against a complete prior scan — a settings toggle
+      // manufacturing green transitions in the panel people use to decide if the site improved. The
+      // scope panel says so in words instead (see `trendLine`).
+      const prior = skipSuites.length ? null : loadLatestRecord(data.host);
+      comparePanel = skipSuites.length ? ''
+        : (prior && prior.data) ? renderComparePanel(diff(prior.data, data), { priorCount: prior.count })
         : renderComparePanel(null);
     } catch (e) { comparePanel = ''; }
     // ---- SCOPE: score the operator's selected checks alone -------------------------------------
@@ -1913,19 +1971,31 @@ async function apiRun(req, res) {
     // still visible in the report. Only `quality` is re-derived, with the excluded rules leaving the
     // numerator AND the denominator together (see score.js). Ids are filtered against the registry
     // first, so a stale/junk id from an older settings file cannot silently distort the denominator.
-    const excludeRules = (Array.isArray(opts.excludeRules) ? opts.excludeRules : [])
-      .filter((id) => typeof id === 'string' && SCOPE_RULE_IDS.has(id));
+    // Rules belonging to a suite that was SKIPPED are dropped from this list: that suite is not in
+    // data.suites at all, so excluding its rules again would double-count the same narrowing and make
+    // the panel claim de-scoped checks that were never run. Skip is disclosed on its own terms below.
+    const skipSet = new Set(skipSuites);
+    const excludeRules = wantExcluded.filter((id) => { const r = SCOPE_CATALOG.rules.find((x) => x.id === id); return r && !skipSet.has(r.suite); });
     let scopePanel = '';
-    if (excludeRules.length) {
-      data.quality = computeQuality(data.suites, { excludeRules });
-      const facts = scopeFacts(data, excludeRules);
+    if (excludeRules.length || skipSuites.length) {
+      // evaluatedRules was being DROPPED here (fixed 4.3.6). runAudit computes quality over what
+      // provably ran; this line recomputed it for scope WITHOUT that declaration, which is score.js's
+      // documented legacy shape — "every rule assumed evaluated". So the moment an operator touched
+      // the scope tree, every never-run check went back to banking its full registry risk as resolved
+      // and the score climbed. Scope must narrow the question, never restore the inflation.
+      const evaluatedRules = (data.coverage && Array.isArray(data.coverage.evaluatedRules)) ? data.coverage.evaluatedRules : null;
+      data.quality = computeQuality(data.suites, evaluatedRules ? { excludeRules, evaluatedRules } : { excludeRules });
+      const facts = scopeFacts(data, excludeRules, skipSuites);
       scopePanel = buildScopePanel(facts);
-      // Recorded in report.json so the de-scoping is auditable after the fact, not just visible.
+      // Recorded in report.json so the narrowing is auditable after the fact, not just visible.
       data.scope = {
-        excludedRules: facts.excluded, scoredOf: facts.total - facts.excluded.length, scorableTotal: facts.total,
+        excludedRules: facts.excluded, scoredOf: facts.total - facts.excluded.length - facts.skippedRuleCount, scorableTotal: facts.total,
         openDefectsExcluded: facts.openHidden, launchBlockersExcluded: facts.blockersHidden,
         suitesFullyExcluded: facts.fullyOut.map((s) => s.key),
-        note: 'Quality score covers the selected checks only. Verdict, tally, checks-passing score and launch readiness remain whole-site.',
+        suitesNotRun: facts.skipped.map((s) => s.key), rulesNotRun: facts.skippedRuleCount,
+        note: facts.skipped.length
+          ? 'Sections listed in suitesNotRun were switched off and NEVER EXECUTED — their results are unknown, not clean, and the verdict/tally/readiness gate no longer cover them. Remaining exclusions ran but are omitted from the Quality score only.'
+          : 'Quality score covers the selected checks only. Verdict, tally, checks-passing score and launch readiness remain whole-site.',
       };
     }
     // recordScan() stores verdict/score/tally/suite ROWS — none of which scope touches — so a partial
@@ -1935,7 +2005,10 @@ async function apiRun(req, res) {
     if (opts.save) saveBaseline(data, opts.save);
     if (opts.baseline) { try { const base = loadResult(opts.baseline); base.data._label = opts.baseline; data._label = 'current'; const d = diff(base.data, data); renderCompare(d, outDir); comparison = true; cmp = d.counts; } catch (e) {} }
     emit({ t: 'done', ok: true, id, verdict: data.verdict, score: data.score, tally: data.tally, comparison, cmp,
-      quality: data.quality ? data.quality.overall : null, scopedOut: excludeRules.length || 0, scorableTotal: SCOPE_CATALOG.rules.length }); res.end();
+      quality: data.quality ? data.quality.overall : null,
+      scopedOut: (excludeRules.length || 0) + SCOPE_CATALOG.rules.filter((r) => skipSet.has(r.suite)).length,
+      notRunSuites: SCOPE_CATALOG.suites.filter((s) => skipSet.has(s.key)).map((s) => s.name),
+      scorableTotal: SCOPE_CATALOG.rules.length }); res.end();
   } catch (e) { if (!aborted) emit({ t: 'done', ok: false, error: String(e && e.message || e) }); res.end(); }
 }
 

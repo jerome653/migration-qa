@@ -1,5 +1,5 @@
 {
-  "packageVersion": "4.3.5",
+  "packageVersion": "4.3.6",
   "engineVersion": "2.3.0",
   "registryVersion": "1.13.0",
   "contractVersion": "1.0.0",
@@ -12,7 +12,7 @@
     "derived": 3,
     "heuristic": 1
   },
-  "release": "V5 Visual Comparison — severity-graded Build Fidelity + recorded re-rate",
+  "release": "Operator section-skip is real (off = not run) + stratified page sampling + scope no longer re-inflates the score",
   "deferred": [
     "SEO-032/033/034 image/video/news sitemaps",
     "HTML-001 broken markup",
@@ -20,6 +20,6 @@
     "near-duplicate content"
   ],
   "generatedAt": "2026-07-15T08:21:48.870Z",
-  "gitTag": "v4.3.5",
+  "gitTag": "v4.3.6",
   "buildBaseCommit": "7103c82"
 }
