@@ -74,6 +74,12 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.5.0', date: '2026-07-20', notes: [
+    'Annotate now works on Site Audit reports. It was Site-Comparison-only: on an audit — which is most runs — the ✎ Annotate button was simply not there and /annotate answered "comparison run not found", so the feature read as broken rather than absent. Open any audit report and mark up its screenshots with the same pen, highlight, comment and erase tools.',
+    'An audit sheet is one page at one viewport, full width, instead of a live-vs-staging pair. Only full-page screenshots become sheets — the per-issue element close-ups stay attached to their findings, where they already are.',
+    'Export PDF works the same from either tool, and the cover says which one it was: an audit PDF no longer claims a "live vs staging" comparison that never happened. Tick "annotated only" to send just the sheets you marked.',
+    'Fixed: a report that had been copied or moved showed every screenshot as a broken image in the annotate view, because the stored paths were absolute. They now resolve inside the run wherever it lives.',
+  ] },
   { version: '4.4.1', date: '2026-07-20', notes: [
     'When a browser fails to load the page, the report now shows WHY. The row used to say "Timeout 40000ms exceeded" and nothing else — its evidence table came out empty. It now lists each navigation attempt and how long it took, whether the document itself arrived or a subresource never finished, every request the browser reported as failed, and everything still in flight when it gave up. That list is usually the actual culprit.',
     'A failure is attributed honestly. "WebKit failed to load the page" reads as a Safari incompatibility, and often it is not — if Chromium also timed out on the same page, the row now says the page did not finish loading in any engine. Real case: a page with a stuck analytics request, an icon font that never loaded and a 30-second LCP was being reported as a Safari-specific launch blocker.',
@@ -1065,8 +1071,12 @@ function appPage() {
     }
     function showReport(pre,route,label){
       var ph=$(pre+'-ph'); if(ph)ph.style.display='none';
-      var isVis=route.indexOf('/visual/')===0;
-      VIEW[pre]={report:route,annotate:isVis?'/annotate/'+route.slice(8):'',mode:'report',label:label||'Report'};
+      // Annotate is offered for BOTH run kinds now: a comparison marks up live-vs-staging pairs, an
+      // audit marks up its own full-page screenshots. It used to be comparison-only, so on a Site
+      // Audit — most runs — the button simply was not there and the feature read as broken.
+      var isVis=route.indexOf('/visual/')===0, isRep=route.indexOf('/report/')===0;
+      var annId=isVis?route.slice(8):(isRep?route.slice(8):'');
+      VIEW[pre]={report:route,annotate:(isVis||isRep)?'/annotate/'+annId:'',mode:'report',label:label||'Report'};
       paintView(pre);
       var f=document.createElement('iframe');f.scrolling='no';autosize(f);f.src=route;
       $(pre+'-frame').appendChild(f);
@@ -1628,9 +1638,20 @@ function visualRunData(id) {
   if (!fs.existsSync(f)) return null;
   try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return null; }
 }
+// A Site AUDIT run, reshaped into the same model data a comparison run produces (annotate.js
+// auditToModelData). Annotate used to resolve ONLY visual-match.json, so every audit run — which is
+// most of them — got "comparison run not found" and the feature looked broken rather than absent.
+function auditRunData(id) {
+  const f = path.join(RUNS, id, 'report.json');
+  if (!fs.existsSync(f)) return null;
+  try { return annotate.auditToModelData(JSON.parse(fs.readFileSync(f, 'utf8')), path.join(RUNS, id)); }
+  catch (_) { return null; }
+}
+// Comparison first (a run is one or the other; only a comparison writes visual-match.json).
+function annotatableRunData(id) { return visualRunData(id) || auditRunData(id); }
 
 function annotateDoc(id, { print = false, onlyAnnotated = false, exportName = null } = {}) {
-  const data = visualRunData(id);
+  const data = annotatableRunData(id);
   if (!data) return null;
   const runDir = path.join(RUNS, id);
   const ann = annotate.loadAnnotations(runDir);
@@ -1667,12 +1688,12 @@ function apiAnnotations(req, res, u, body) {
 async function apiAnnotatePdf(req, res, u) {
   const id = safe(u.searchParams.get('id') || '');
   const runDir = path.join(RUNS, id);
-  const data = id ? visualRunData(id) : null;
-  if (!data) return send(res, 404, 'application/json', JSON.stringify({ ok: false, error: 'comparison run not found' }));
+  const data = id ? annotatableRunData(id) : null;
+  if (!data) return send(res, 404, 'application/json', JSON.stringify({ ok: false, error: 'run not found (annotate needs a Site Audit or Site Comparison run)' }));
   const onlyAnnotated = u.searchParams.get('only') === 'annotated';
   const ann = annotate.loadAnnotations(runDir);
   const model = annotate.buildExportModel(data, ann, { onlyAnnotated });
-  if (!model.totals.sheets) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: onlyAnnotated ? 'no annotated sheets yet — add a mark or a note first' : 'this run paired no pages' }));
+  if (!model.totals.sheets) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: onlyAnnotated ? 'no annotated sheets yet — add a mark or a note first' : 'this run has no full-page screenshots to annotate (was the render pass off?)' }));
   const dir = path.join(RUNS, annotate.EXPORTS_DIRNAME);
   try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
   // Reserve the name BEFORE rendering, ATOMICALLY. A plain existsSync check would leave a wide
@@ -1894,7 +1915,7 @@ const server = http.createServer(async (req, res) => {
       const { id, asset } = splitRoute(p, '/annotate');
       if (asset) return await serveAnnotateAsset(res, id, asset, u);
       const doc = annotateDoc(id, { print: u.searchParams.get('print') === '1', onlyAnnotated: u.searchParams.get('only') === 'annotated', exportName: u.searchParams.get('name') });
-      if (!doc) return send(res, 404, 'text/plain', 'comparison run not found');
+      if (!doc) return send(res, 404, 'text/plain', 'run not found (annotate needs a Site Audit or Site Comparison run)');
       return send(res, 200, 'text/html; charset=utf-8', doc.html);
     }
 
