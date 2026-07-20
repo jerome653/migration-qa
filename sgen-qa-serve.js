@@ -74,6 +74,12 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.3.5', date: '2026-07-20', notes: [
+    'Every issue now shows its evidence where you read it. Click any row in the Issues list to expand the page it was found on (or the scope, when a finding covers the whole site), what was observed, the measured value, and every occurrence with its element selector and a copy-ready dev ticket.',
+    'Before this, a row gave you the rule name and a count — "4 occurrences" — and you had to jump to the per-section detail to find out anything about it. The evidence was always in the report; the list simply was not showing it. "detail →" still works exactly as before.',
+    'The report is reordered so the list you act on comes first: verdict, then pages audited, then the last-scan comparison, then Issues, then the per-section detail it links into. Inspector lenses and the screenshot gallery now sit below. Previously "detail →" scrolled you past the whole screenshot gallery to reach the issue you just clicked.',
+    'Your scores are not affected. This release changes how the report is laid out and what it shows you, not what it measures — the same scan produces the same score, tally and launch verdict.'
+  ] },
   { version: '4.3.4', date: '2026-07-17', notes: [
     'Simpler headline: the report now shows one overall score. The top ring shows the overall Quality score (0–100) instead of "% checks passing".',
     'The per-section "Score dashboard" has been removed, including its "Fix first" launch-blocker shortcuts. The launch verdict still shows at the top, and every issue is still listed in full in the Issues section and per-section detail below.',
