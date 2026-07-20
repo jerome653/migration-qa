@@ -74,6 +74,12 @@ const UPDATE_LOG = path.join(NOTES_DIR, 'update-log.json');
 // wall of data the panel became when 3.0.0–4.0.0 shipped with the changelog frozen at 2.5.13.
 // Write for the person reading the report, not for the commit log: what changed FOR THEM.
 const CHANGELOG = [
+  { version: '4.4.1', date: '2026-07-20', notes: [
+    'When a browser fails to load the page, the report now shows WHY. The row used to say "Timeout 40000ms exceeded" and nothing else — its evidence table came out empty. It now lists each navigation attempt and how long it took, whether the document itself arrived or a subresource never finished, every request the browser reported as failed, and everything still in flight when it gave up. That list is usually the actual culprit.',
+    'A failure is attributed honestly. "WebKit failed to load the page" reads as a Safari incompatibility, and often it is not — if Chromium also timed out on the same page, the row now says the page did not finish loading in any engine. Real case: a page with a stuck analytics request, an icon font that never loaded and a 30-second LCP was being reported as a Safari-specific launch blocker.',
+    'The main browser stops hiding the same failure. Its navigation timeout was swallowed into a console line while the cross-browser check turned an identical timeout into a launch blocker — one failure, two verdicts.',
+    'A page that will not load is abandoned roughly twice as fast (measured 102s → 55s per engine): the retry no longer waits a second full 40 seconds, and a page that never arrived is no longer searched for cookie banners or screenshotted.',
+  ] },
   { version: '4.4.0', date: '2026-07-20', notes: [
     'The report is ONE list. "Issues" and "Passed tests & per-section detail" were two tables showing the same checks — you read one to find a problem and the other to understand it, and "detail →" was the jump between them. Now: one list, filtered by All / Blockers / Major / Polish / Passed / Review, grouped by section.',
     'Every row expands where it sits. Click a finding and its page, observed value, measurement and every occurrence (with element selectors) open in place — the page does not move under you and there is nothing to scroll to any more.',
